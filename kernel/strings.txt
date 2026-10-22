@@ -1,0 +1,534 @@
+<-t}<+
+0123456789abcdef
+net: AMD PCnet-PCI (1022:2000) NOT found
+PCI devices on bus 0: 
+add to QEMU:  -netdev user,id=n0  -device pcnet,netdev=n0
+net: AMD PCnet-PCI up (10.0.2.15)
+GCC: (Rev3, Built by MSYS2 project) 16.2.0
+GCC: (Rev3, Built by MSYS2 project) 16.2.0
+!@#$%^&*()_+
+	QWERTYUIOP{}
+ASDFGHJKL:"~
+|ZXCVBNM<>?
+1234567890-=
+	qwertyuiop[]
+asdfghjkl;'`
+\zxcvbnm,./
+GCC: (Rev3, Built by MSYS2 project) 16.2.0
+GCC: (Rev3, Built by MSYS2 project) 16.2.0
+   _____      _        ____   _____ 
+  / ____|    | |      / __ \ / ____|
+ | |     __ _| |_  ___| |  | | (___  
+ | |    / _` | __|/ _ \ |  | |\___ \ 
+ | |___| (_| | |_  __/ |__| |____) |
+  \_____\__,_|\__|\___|\____/|_____/ 
+  A tiny Unix-like shell OS on GRUB Multiboot
+  Architecture : i386 (32-bit x86)
+  Bootloader   : GRUB 2 (ISO9660 / El Torito)
+  Display      : VGA text mode 80x25
+  Input        : PS/2 keyboard (US QWERTY)
+  Filesystem   : FAT32 on IDE (dirs + text files)
+  Runs on       : QEMU / VMware / Bochs / real PC
+CatOS nano  
+ lines
+  [modified]
+^G Help  ^O Save  ^X Exit  ^K Del Line  ^U Clear  Arrows Move
+ (no PCI NIC; add -device pcnet)
+ (PCnet found but init failed; run 'netdiag')
+ (NIC on bus is not PCnet 1022:2000; use -device pcnet)
+0123456789ABCDEF
+format
+net: AMD PCnet-PCI up (10.0.2.15)
+net: PCnet-PCI (1022:2000) NOT found; PCI bus 0: 
+no devices
+add to QEMU:  -netdev user,id=n0  -device pcnet,netdev=n0
+[!] No FAT32 volume on IDE drive.  Type 'format' first.
+Type 'help' for a list of commands.
+CatOS v0.2 - available commands:
+  help         show this message
+  clear        clear the screen
+  echo TEXT    print text back
+  about        system info banner
+  uname        print OS name
+  date         show RTC date/time
+  mem          show RAM size (multiboot)
+  color NUM    set foreground color (0-15)
+  reboot       warm reboot the machine
+  hang         halt the CPU (QEMU: close window)
+  ping         fake ping demo
+  run FILE.ce [args..]  execute a CE app (see /appdevelop)
+  curl URL     HTTP GET (http://IP[:port]/path)
+  ping IP      ICMP echo (3 tries)
+  dns NAME     resolve a hostname
+  udp IP PORT TEXT  send one UDP datagram and wait for a reply
+  Program lookup: builtin -> current dir .ce -> /bin .ce (PATH)
+  -- filesystem (RAM, wiped on reboot) --
+  dir [PATH]   list a directory
+  cd [PATH]    change directory (use .. or /)
+  mkdir PATH   create a directory
+  touch FILE   create an empty file
+  format       erase the RAM filesystem (y/n confirm)
+  edit FILE    nano-style full-screen editor
+               (arrows move, ^O save, ^X exit, ^K del line, ^U clear)
+CatOS i386 0.2 (grub-multiboot)
+Current RTC: 
+Lower memory (0-640K): 
+Upper memory (>1MB)  : 
+Total approx         : 
+Memory info not provided by GRUB.
+reboot
+Rebooting...
+Halting. Press Ctrl-Alt-Del or close the VM.
+cd: no such directory
+cd: not a directory
+usage: mkdir PATH
+mkdir: parent directory not found
+mkdir: parent is not a directory
+mkdir: file or directory already exists
+mkdir: invalid name
+mkdir: disk full (FAT32)
+usage: touch FILE
+touch: parent directory not found
+touch: is a directory
+touch: invalid name
+touch: disk full (FAT32)
+Format FAT32 volume?  This erases ALL files.
+Disk: 
+ MiB IDE, FAT32, 512B/sector 
+ sectors/cluster.
+Proceed? (y/n) 
+FAT32 volume formatted.
+Top-level dirs: /dev /etc /bin /sbin /lib /usr /home
+                /root /tmp /var /proc /sys /mnt /boot
+Aborted.
+usage: edit FILE
+edit: cannot create/open file
+Save?  ^O=yes  ^Y=no  any other=cancel
+edit: saved 
+ bytes.
+SAVE FAILED: exceeds 512-byte file limit
+Saved.
+^O/^S save  ^X exit  ^K del line  ^U clear  arrows move  Del delete
+Too many lines (max 64)
+Line is full (max 79 chars)
+usage: run FILE.ce [args...]
+run: no FAT32 volume.
+run: cannot load '
+' (missing / bad CE01 / too big)
+usage: curl http://IP[:port]/path
+e.g.   curl http://10.0.2.2:8080/API.txt
+curl: network not ready
+curl: error 
+ (1=NIC 2=host 3=connect 4=http 5=resp 6=send)
+ bytes ---
+usage: ping IP_or_host
+ping: network not ready
+usage: dns hostname
+dns: network not ready
+dns: could not resolve '
+usage: udp IP port text
+udp: network not ready
+udp: send failed
+sent, waiting for reply...
+reply from 
+ bytes): 
+udp: no reply
+netdiag
+PCI bus 0: 
+net_ready=
+  io_base=0x
+csr0=0x
+tx_calls=
+ tx_last=
+ rx_frames=
+tx_word0=0x
+ rx_word0=0x
+desc_tx0=0x
+ desc_rx0=0x
+init@0x
+ rxr=0x
+ txr=0x
+XMTRC=
+ CXDA=0x
+ RL/TL=
+csr0_now=0x
+ csr15(mode)=
+ POLL=
+IADR=0x
+ csr6=
+ XMTRC=
+init_rcvrl=
+ init_xmtrl=
+usage: color 0..15
+catos: unknown command: 
+no-reply 
+reply  
+GCC: (Rev3, Built by MSYS2 project) 16.2.0
+ entry ---
+ entries ---
+catos: no FAT32 volume. Run 'format' first.
+catos: dir: no such directory
+catos: dir: not a directory
+[DIR ] 
+[FILE] 
+ bytes)
+GCC: (Rev3, Built by MSYS2 project) 16.2.0
+GCC: (Rev3, Built by MSYS2 project) 16.2.0
+CATOS   
+CATOSVOL   
+FAT32   
+appdevelop
+GCC: (Rev3, Built by MSYS2 project) 16.2.0
+0123456789abcdef
+10.0.2.15
+GCC: (Rev3, Built by MSYS2 project) 16.2.0
+GCC: (Rev3, Built by MSYS2 project) 16.2.0
+User-Agent: CatOS-curl/1.0
+Connection: close
+ HTTP/1.0
+Host: 
+GCC: (Rev3, Built by MSYS2 project) 16.2.0
+builtin: install FAILED for 
+ (disk full?)
+Installed built-in apps & docs from kernel image.
+/bin/hello.ce
+/bin/calc.ce
+/bin/sysinfo.ce
+/bin/demo.ce
+/bin/curl.ce
+/bin/netinfo.ce
+/appdevelop/API.TXT
+/appdevelop/CEFORMAT.TXT
+CatOS Executable (.ce) format
+=============================
+A .ce file is a 20-byte header followed by the raw image (the flat
+objcopy -O binary dump of a freestanding i386 program: text + rodata +
+data).  Little-endian throughout.
+Header (20 bytes):
+  offset  size  field
+  0       4     magic      "CE01"
+  4       4     entry      entry offset inside the image (must be 0)
+  8       4     bss_size   bytes of zeroed bss placed after the image
+  12      4     api_offset offset of the 4-byte API pointer slot
+  16      4     image_size raw image bytes following the header
+Loading (done by the kernel for the `run` command):
+  1. the whole file is read from the FAT32 volume at CE_LOAD_BASE
+     (16 MiB, far above the kernel image);
+  2. the magic is verified; entry must be 0;
+  3. the 20-byte header is dropped and the raw image is slid to the base;
+  4. bss_size zero bytes follow the image;
+  5. the address of the system-call table is stored at
+     image[api_offset] (the __ce_api slot);
+  6. the CPU switches to a kernel-owned 8 KiB stack;
+  7. the kernel calls image offset 0 as  ce_main(argc, argv)  where
+     argc/argv carry the command line from `run FILE.ce args...`
+     (argv[0] is the .ce path; legacy ce_main(void) apps also work).
+     ce_main returns normally or calls exit() to go back to the shell.
+Building an application (on the Windows host):
+  sh build_ce.sh myapp.c      # gcc -> ld (extapp/ce.ld) -> objcopy
+                              # -> build/mkce.py adds the header
+                              # output: extapp/bin/myapp.ce
+  - the entry point must be named ce_main and sit at image offset 0
+    (build_ce.sh verifies this);
+  - the API pointer slot is created by declaring
+        catos_api_t *__ce_api __attribute__((section(".ce_api"))) = 0;
+    its offset is read with nm and stored in the header;
+  - no libc: write your own string/number helpers (see ce_abi.h).
+API documentation: see API.TXT in this directory.
+CE compiler:       build/mkce.py   (Python, wraps the CE01 header)
+                   extapp/build_ce.sh  (full compile pipeline)
+CatOS System API v2.2
+=====================
+CE programs are freestanding i386 binaries loaded by the `run` command.
+Before the entry point is called the kernel writes the address of the
+system-call table into the __ce_api slot of your image.  Every app must
+declare:
+    catos_api_t *__ce_api __attribute__((section(".ce_api"))) = 0;
+and then call the functions through __ce_api (or the CE_API() helper in
+extapp/ce_abi.h).  The entry point receives the command line:
+    int ce_main(int argc, char **argv)
+`run /bin/app.ce a b c` gives argc=4, argv[0]="/bin/app.ce",
+argv[1]="a", argv[2]="b", argv[3]="c".  A legacy ce_main(void) also
+works (the arguments are ignored).  The full table (33 calls):
+--- console ---------------------------------------------------------
+void write(const char *s);     print a NUL-terminated string
+void putc(char c);             print one character
+void cls(void);                clear the screen
+--- input -----------------------------------------------------------
+int readline(char *buf, int max);
+                               read one line (Enter), returns length;
+                               0 if nothing was typed
+--- time ------------------------------------------------------------
+void time_str(char *out);      fills "YYYY-MM-DD HH:MM:SS" (24 bytes)
+--- filesystem ------------------------------------------------------
+int fs_ready(void);            1 when the FAT32 volume is mounted
+int ls(const char *path, cb, ud);
+                               list a directory; cb(int is_dir,
+                               const char *name, uint32_t size, void *ud)
+                               is called for every entry; returns 0
+int touch(const char *path);   create an empty file if absent; 0 = ok
+int mkdir(const char *path);   create a directory; 0 = ok
+int cat(const char *path, char *buf, int max);
+                               read a file into buf, returns bytes read
+int save(const char *path, const char *data, uint32_t size);
+                               write a file (max 512 bytes); 0 = ok
+--- memory ----------------------------------------------------------
+void *alloc(uint32_t size);    8-byte aligned block, 0 when out of memory
+void free(void *p);            free a block returned by alloc
+--- misc ------------------------------------------------------------
+void exit(int code);           return to the shell immediately
+--- networking (AMD PCnet-PCI, QEMU user-net) ----------------------
+int net_init(void);            init the NIC (idempotent, called at boot)
+int net_up(void);              1 when the NIC is running
+int http_get(const char *url, char *buf, int max);
+                               one-shot HTTP GET.  Returns bytes copied
+                               into buf (>=0) or an error code:
+                                 -1 NIC down    -2 hostname unsupported
+                                 -3 connect     -4 HTTP status not 2xx
+                                 -5 response    -6 send failed
+                               URL form: http://host[:port]/path  where
+                               host may be an IP or a DNS name.
+int net_dns(const char *host, char *ip_out);
+                               resolve a host name to a dotted IPv4
+                               string (via the QEMU user-net DNS,
+                               10.0.2.3).  Returns 0 = ok, -1 = failed.
+                               IP literals ("10.0.2.2") pass through.
+int net_udp_send(const char *ip, int port, const char *data, int len);
+                               send one UDP datagram to ip:port.
+                               Returns 0 = ok, -1 = failed.
+int net_udp_recv(char *src_ip, int *src_port, char *buf, int max);
+                               wait (bounded) for one UDP datagram;
+                               copies payload into buf, fills src_ip /
+                               *src_port.  Returns bytes received,
+                               -1 = timed out / no datagram.
+int net_ping(const char *ip);  send one ICMP echo and wait for the
+                               reply.  Returns 0 = reply, -1 = no reply.
+int net_ip(char *out);         copies this machine's IPv4 address as a
+                               dotted string into out (e.g. 10.0.2.15).
+  Example (see extapp/netinfo.c for a complete program):
+      api->net_init();
+      if (!api->net_up()) { ...network adapter not ready... }
+      char ip[24];
+      api->net_ip(ip);                     /* "10.0.2.15" */
+      api->write(ip);
+      if (api->net_dns("example.com", ip) == 0) api->write(ip);
+      if (api->net_ping("10.0.2.2") == 0)  api->write("alive\n");
+      char buf[1024];
+      int n = api->http_get("http://10.0.2.2:8080/API.txt", buf, sizeof(buf));
+      if (n >= 0) { api->write(buf); }     /* n = number of bytes received */
+  (QEMU user-net: guest 10.0.2.15, host loopback 10.0.2.2, DNS 10.0.2.3.
+   To fetch from the host run `python -m http.server 8080` there and use
+   http://10.0.2.2:8080/...  External HTTP may be blocked by the host
+   network; DNS and ping are the reliable path for beginners.)
+--- beginner-friendly helpers (v2.0+, all NULL-safe / bounds-checked) -
+void print_int(int v);         print a decimal integer (handles negatives)
+void print_hex(uint32_t v);    print "0x" + 8 lowercase hex digits
+void set_fg(int color);        set foreground color 0..15
+void delay(uint32_t ms);       busy-wait (CPU loop; good for animations)
+int  atoi(const char *s);      decimal string -> int (0 if bad input)
+int  strlen(const char *s);    string length
+int  strcmp(const char *a, const char *b);
+                               -1 / 0 / +1 style comparison
+void strcpy(char *d, const char *s);
+                               copy string into d
+int  getch(void);              blocking single key (ASCII or KB_* code)
+int  file_exists(const char *path);
+                               1 = exists (file or directory)
+int  fsize(const char *path);  file size in bytes, -1 if absent
+Error codes (filesystem calls):
+    0  ok
+   -1  path / file not found
+   -2  expected a directory
+   -3  bad name
+   -4  disk / entry pool full
+   -5  already exists
+Limits:
+   image size   <= 64 KiB
+   file writes  <= 512 bytes (via save(); built-in apps are installed
+                  directly by the kernel so they can be larger)
+   heap         64 KiB static pool
+   stack        8 KiB kernel-owned
+Built-in apps:
+   After `format` (and at every boot as a fallback) the kernel installs
+   the CE apps embedded in the ISO image onto the FAT32 volume:
+     /bin/hello.ce   first program: strings, time, alloc/free
+     /bin/calc.ce    calculator: run /bin/calc.ce, or one-shot with
+                     arguments: run /bin/calc.ce 10 + 5  (print 15)
+     /bin/sysinfo.ce system information + directory browser
+     /bin/demo.ce    API demo: print_int/hex, strings, atoi, colors,
+                     getch, delay
+     /bin/curl.ce    tiny HTTP client; URL as argument:
+                     run /bin/curl.ce http://10.0.2.2:8080/API.txt
+                     (with no argument it asks for an URL)
+     /bin/netinfo.ce one-shot network report: own IP, DNS lookup,
+                     ping, UDP echo (see the networking section above)
+   Source code for all of them lives in extapp/ (host side).
+Program lookup (shell):
+   Every command is resolved in this order:
+     1. shell builtin (dir, cd, mkdir, touch, edit, format, run, curl,
+        ping, dns, udp, netdiag, help, clear, echo, about, uname, date,
+        mem, reboot, hang, color)
+     2. a .ce program in the current directory
+     3. a .ce program in /bin (the PATH directory)
+     4. otherwise: "catos: unknown command: <cmd>"
+   So from anywhere you can just type `calc`, `hello` or `netinfo`.
+Examples:
+   sh build_ce.sh calc.c      (see extapp/build_ce.sh)
+   run /bin/calc.ce           (from the CatOS shell)
+   run /bin/calc.ce 7 * 6     (print 42)
+   run /bin/curl.ce http://10.0.2.2:8080/API.txt
+=== CatOS netinfo ===
+network: no network card found (add -device pcnet)
+network: adapter not ready
+my ip  : 
+resolve 'example.com' ...
+example.com
+example.com -> 
+dns: failed (host may be offline)
+ping 10.0.2.2 ...
+10.0.2.2
+ping 10.0.2.2: reply
+ping 10.0.2.2: no reply
+udp echo to 10.0.2.2:9999 ...
+hello from CatOS
+reply from 
+udp: no reply (start an echo server on the host)
+udp: send failed
+GCC: (Rev3, Built by MSYS2 project) 16.2.0
+0Z0h0q0~0
+0D1X1m1{1
+=== CatOS curl ===
+network: no network card found (add -device pcnet)
+network: adapter not ready
+net: up (10.0.2.15)
+fetching ...
+curl: error 
+ (1=NIC 2=host 3=connect 4=http 5=resp 6=send)
+--- response ---
+--- done: 
+ bytes ---
+GCC: (Rev3, Built by MSYS2 project) 16.2.0
+=== CatOS API Demo ===
+int : 
+hex : 
+strcpy -> '
+'  strlen = 
+strcmp: equal
+strcmp: NOT equal
+atoi("  42 ") = 
+/bin/calc.ce
+file_exists /bin/calc.ce: YES
+file_exists /bin/calc.ce: NO
+fsize(/bin/calc.ce) = 
+delay(60ms) ... 
+press any key to exit ...
+bye from demo!
+GCC: (Rev3, Built by MSYS2 project) 16.2.0
+020E0N0a0k0x0
+1#1,1?1H1T1s1
+  [DIR ] 
+  [FILE] 
+CatOS System Info
+  kernel      : CatOS 1.0 (i386, GRUB 2.06)
+  time        : 
+  filesystem  : 
+FAT32 on IDE (mounted)
+  heap probe  : 
+alloc 4096 ok
+alloc failed
+  / listing  :
+  entries     : 
+  type a path to list it, or 'q' to quit
+sysinfo> 
+  entries: 
+GCC: (Rev3, Built by MSYS2 project) 16.2.0
+0'0;0D0Z0c0
+1+1=1F1a1{1
+syntax: A op B
+div by zero
+bad operator
+CatOS Calculator
+expr: A op B   (op = + - * / %)
+type 'quit' to return to the shell
+calc> 
+GCC: (Rev3, Built by MSYS2 project) 16.2.0
+0-0D0V0p0
+0*1F3S3
+004080<0@0D0H0L0P0T0X0
+Hello from CE!
+This is a native CatOS application.
+Time: 
+alloc test: 
+alloc test: out of memory
+GCC: (Rev3, Built by MSYS2 project) 16.2.0
+0&0:0u0
+GCC: (Rev3, Built by MSYS2 project) 16.2.0
+0!0@0X0s0
+141>1Y1d1t1
+22292V2
+4'434B4e4m4
+777L7R7
+:5:?:[:e:y:
+;B>Z>f>r>~>
+?+?E?Y?o?
+00080V0
+1*151@1S1c1
+2H2Q2h2
+2;3@3Z3i3t3
+494T4l4
+8+9D9X9d9s9}9
+= =+=L=g=
+=5>f>r>
+>M?a?r?
+1,1=1M1V1]1h1m1r1w1
+313I3Z3d3
+4.484>4R4]4r4x4
+5*5;5D5a5
+6$6+656;6A6S6w6
+818;8B8T8^8
+:9:J:`:l:}:
+;V<l<}<
+>->>>T>x>
+1*1;1L1]1n1z1
+2 2,2?2K2U2m2w2
+3!3-3C3Y3o3{3
+404<4Z4z4
+5/5;5G5_5k5
+;+=k=N?X?]?h?m?
+2'2\2t2y2
+2,3E3c3
+4'5H5`5
+;R<k<e=
+1N2V2\2
+365>5N5V5q5
+6$6;6R6
+8g8t8|8
+9>9M9W9^9m9
+:!:+:T:q:
+>=>G>\>i>r>
+2H3P3\3
+4"4c4}4
+4!5Q5{5
+5&6D6R6r6
+7[9d9m9s9}9
+<#<)<#=7=
+>#>]?b?
+020Q0_0h0m0
+1#1.131R1[1i1u1}1
+1=2G2e2o2
+3 3+313
+5*656B6H6
+2V3k3q3
+5S6^6h6?7L7c7
+8+8;8T8Z8
+9%9,9C9}9
+:%:U;o;
+020A0Q0m1
+1+2C2J2
+4,4G4Q4c4
+8;8K8Z8|8
+;+<5<@<j<
+>H>6?Y?l?r?{?
+2K2T2]2f2
+5+525I5
+; ;$;(;,;0;4;8;<; =$=(=,=0=4=8=<=@=D=H=L=P=T=X=
