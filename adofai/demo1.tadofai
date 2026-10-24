@@ -1,0 +1,20 @@
+# ADoFAI-mini DEMO 1 - Tutorial
+# bpm 100, ~16 tiles, one speed 200, one twirl
+title: CatOS - Tutorial Beats
+bpm: 100
+tile 0
+tile 90
+tile 180
+tile 270
+tile 0
+tile 90 speed 200
+tile 180
+tile 270
+tile 0
+tile 90
+tile 180 twirl
+tile 270
+tile 0
+tile 90
+tile 180
+tile 270

@@ -1,0 +1,28 @@
+# ADoFAI-mini DEMO 2 - Twirl & Speed
+# bpm 140, ~24 tiles, alternating twirl, speed 150/75, two midspin (999)
+title: CatOS - Twirl Storm
+bpm: 140
+tile 0
+tile 90 twirl
+tile 180
+tile 270 twirl
+tile 0
+tile 90 speed 150
+tile 180
+tile 270
+tile 0 twirl
+tile 90
+tile 180
+tile 270 twirl
+tile 999
+tile 0
+tile 90
+tile 180 speed 75
+tile 270
+tile 0
+tile 90 twirl
+tile 180
+tile 270
+tile 999
+tile 0
+tile 90
