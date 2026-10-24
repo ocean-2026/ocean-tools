@@ -8,8 +8,9 @@ def readelf_section_size(elf, sec):
     for line in out.splitlines():
         parts = line.split()
         # -W format: [ 4] .bss NOBITS <addr> <off> <size> ...
+        # parts: [0]='[' [1]='4]' [2]=name [3]=type [4]=addr [5]=off [6]=size
         if len(parts) >= 7 and parts[2] == sec:
-            return int(parts[5], 16)
+            return int(parts[6], 16)
     return 0
 
 def nm_symbol_addr(elf, name):
