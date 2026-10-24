@@ -13,7 +13,7 @@ CatOS i386 用户态全屏命令行（CE 应用），运行于 QEMU/Bochs 虚拟
 
 ## 版本
 
-- v1.9：用户态 execve（`run /BIN/NAME.CE [ARGS]` 从 ot 内加载执行 .ce：黑盒探测内核 CE 调用约定后实现，跳板覆写 0x02000000、透传 argc/argv、新 CE 返回后 cli/hlt；当前仅支持 ≤8KB 镜像，swap 落地后放开）+ 内核问题清单 #34 QEMU 新实例键盘失效记录
+- v1.9：用户态 execve（`run /BIN/NAME.CE [ARGS]`）+ 软件交换层 swap（`swapout/swapin/swapinfo`，512B 页映射 /TMP/SWAP.DAT 分片，打破 512B save / 8KB cat 限制）+ 合作式权限系统（ACL.TXT：adminonly 命令白名单 / protect 文件保护，su/whoami/acl）+ 剪贴板（clp 命令 + readline Ctrl+A/C/X/V + Ctrl+P 快照 snap）+ Modal 弹窗（+-| 边框居中 [ ] 按钮）+ 用户态分配器（mem：SMALL/LARGE size-class 池）+ 网络诊断（netdiag 用户态摘要）+ 命名空间前缀路由（net.ping/fs.cat→基础命令）+ CSC L1 表达式求值器（eval 命令）；镜像 65144B/65536B；L3 func/call/ret 与 shell 现代化（⑩）因镜像预算转设计文档（v1.9-deferred.md），⑪ 功能包外置 calc/wc/time .csc 脚本；内核问题清单 #34 QEMU 新实例键盘失效
 - v1.8：外置化评估（edt/fm/cedbg 保持内置）+ mkce.py bss 列解析 bug 修复 + 收尾修复
 - v1.7：CSC 2.1 系统原语（key/peek/poke/alloc 等 19 项）+ sft/vcs 外置化（镜像体积较 v1.6 再减 2.8KB）
 - v1.6：CSC 2.0 语法核心 + 外置 diff/vk（diff/vk 由 CSC 脚本实现）
@@ -33,7 +33,8 @@ bash build.sh          # -Os 编译 → ocntools.ce（≤64KiB，含 CE01 头）
 - `ocean_tools.c`  主源码（shell + CSC 解释器 + 内置工具）
 - `hexedit_port.c`  edt（hexedit）移植源
 - `fmgr_port.c`     fm（fmgr）移植源
-- `scripts/`        外置 CSC 脚本源码（sft.csc 108 行 / vcs.csc 124 行）
+- `scripts/`        外置 CSC 脚本源码（sft.csc 108 行 / vcs.csc 124 行 / calc.csc / wc.csc / time.csc / verify.csc）
 - `build.sh`        构建脚本
 - `OCNTOOLS.CFG`    默认配置
+- `v1.9-deferred.md` L3 子程序 / shell 现代化设计稿 + ⑪ 功能包状态表
 - 镜像 `/BIN`：`diff.csc` `vk.csc` `sft.csc` `vcs.csc` 外置脚本 + `ocntools.v15.ce`/`ocntools.v16.ce` 历史备份（可回滚）
