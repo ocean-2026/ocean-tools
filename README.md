@@ -1,1 +1,21 @@
-PLACEHOLDER
+# Ocean's Tools (ot / oceanshell / osh)
+
+CatOS i386 用户态全屏命令行（CE 应用），运行于 QEMU/Bochs 虚拟机的 CatOS 系统。
+
+## 特性
+
+- 全屏字符终端 shell，像素横幅 **OCEAN'S TOOLS**（大写、浅蓝 87,87,255）
+- 配置文件 `/BIN/OCNTOOLS.CFG`：标题、标语、欢迎语、启动信息、启动命令
+- 历史 16 条、Tab 补全、alias、多色 prompt
+- **CSC 脚本语言（CSC 2.1）**：变量 32、数组 4×64、文件缓冲 fa/fb 各 8K（≤128 行索引）、for 栈 4 层、位置参数 $0-$9、字符串函数（len/upper/lower/substr/find/tok/same）、文件命令（load/loadb/rows/row/write/saveb/mergeb/dirb/clrb）、系统原语（key/peek/poke/alloc/free/arg/exists/fsize/now/pad2/revd/filen/snapb/cmpb）、整数算术
+- **外置命令机制**：`/bin/*.csc` 自动注册为命令（v1.6 起 diff/vk 外置；v1.7 起 sft/vcs 外置，CSC 解释器是 ot 唯一必备内置）
+- 内置工具：edt(hexedit)、fm(fmgr)、cedbg + 原 cat/ls/rm/touch/mkdir/cd/pwd 等（sft/vcs 已移至外置脚本）
+
+## 版本
+
+- v1.10：镜像瘦身（help 两栏补全 + about/edt/colors/分隔线压缩 + banner 字符画外置 /BIN/BANNER.TXT，缺文件降级纯文本；-576B → 64952B）+ **CSC L3 子程序**（func/call/ret：func 名注册为标签、call 压帧保存返回行+位置参数 $1..$9、ret 写 $ret 变量并弹帧恢复，帧栈深度 8；`call` 实参变量展开/字符串拼接/else if 转 v1.11）+ swapin 分片绕行（按 RAM 页数只读前 N 片，忽略旧 .A0x 残留，绕 CE 无 delete API 限制）；镜像 65432B/65536B（功能审 PASS：swapin 分片 off-by-one + csc_clear 帧残留 2 修；审美审 3.6/5 见 aesthetic_v110.md）；外置脚本 L3TEST.CSC 冒烟；⑩ shell 现代化（分号链/重定向/管道）因余量 104B 转 v1.11
+- v1.9：用户态 execve（`run /BIN/NAME.CE [ARGS]`）+ 软件交换层 swap（`swapout/swapin/swapinfo`，512B 页映射 /TMP/SWAP.DAT 分片，打破 512B save / 8KB cat 限制）+ 合作式权限系统（ACL.TXT：adminonly 命令白名单 / protect 文件保护，su/whoami/acl）+ 剪贴板（clp 命令 + readline Ctrl+A/C/X/V/P Ctrl+P 快照 snap）+ Modal 弹窗（+-| 边框居中 [ ] 按钮）+ 用户态分配器（mem：SMALL/LARGE size-class 池）+ 网络诊断（netdiag 用户态摘要）+ 命名空间前缀路由（net.ping/fs.cat→基础命令）+ CSC L1 表达式求值器（eval 命令）；镜像 65528B/65536B（双审收口：功能 2 轮 PASS + 审美有条件认可，余 8B）；L3 func/call/ret 与 shell 现代化（⑩）因镜像预算转设计文档（v1.9-deferred.md），⑪ 功能包外置 calc/wc/time .csc 脚本；内核问题清单 #34 QEMU 新实例键盘失效
+- v1.8：外置化评估（edt/fm/cedbg 保持内置）+ mkce.py bss 列解析 bug 修复 + 收尾修复
+- v1.7：CSC 2.1 系统原语（key/peek/poke/alloc 等 19 项）+ sft/vcs 外置化（镜像体积较 v1.6 再减 2.8KB）
+- v1.6：CSC 2.0 语法核心 + 外置 diff/vk（diff/vk 由 CSC 脚本实现）
+- v1.4：集成 catos-ce-tools 七工具，双审闭环（功能 PASS + 审美认可）
