@@ -13,7 +13,8 @@ CatOS i386 用户态全屏命令行（CE 应用），运行于 QEMU/Bochs 虚拟
 
 ## 版本
 
-- v1.8：外置化评估 edt/fm/cedbg 保持内置（镜像余 ~8.1K）+ 收尾修复（fmgr p[-1] 边界警告、版本号 v1.7→v1.8）+ mkce.py bss 列解析 bug 修复
+- v1.9：用户态 execve（`run /BIN/NAME.CE [ARGS]` 从 ot 内加载执行 .ce：黑盒探测内核 CE 调用约定后实现，跳板覆写 0x02000000、透传 argc/argv、新 CE 返回后 cli/hlt；当前仅支持 ≤8KB 镜像，swap 落地后放开）+ 内核问题清单 #34 QEMU 新实例键盘失效记录
+- v1.8：外置化评估（edt/fm/cedbg 保持内置）+ mkce.py bss 列解析 bug 修复 + 收尾修复
 - v1.7：CSC 2.1 系统原语（key/peek/poke/alloc 等 19 项）+ sft/vcs 外置化（镜像体积较 v1.6 再减 2.8KB）
 - v1.6：CSC 2.0 语法核心 + 外置 diff/vk（diff/vk 由 CSC 脚本实现）
 - v1.4：集成 catos-ce-tools 七工具，双审闭环（功能 PASS + 审美认可）
