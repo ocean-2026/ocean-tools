@@ -77,3 +77,25 @@
 | 32 | mkce.py 的 readelf .bss 列解析 bug（取 offset 当 size）→ CE01 头 bss 字段偏小，内核只清零部分 BSS，静态数组尾部为垃圾值 | readelf -S 第5列 offset vs 第6列 size | 已修复（adofai/mkce.py 取第6列）；ocean_tools 的 mkce.py 若同源需同步修复 | adofai 项目 | 已修复（工具） |
 | 33 | QEMU monitor screendump 偶发不写文件（同一命令多次重试可成功），且 screendump 实际捕获状态比发出时刻滞后 ~1.5-2s | 工具备忘 | 测试脚本需重试 + 容忍滞后；判断状态用色彩统计（绿=游玩准度条/黄=胜利/红=失败屏） | adofai 项目 | 工具备忘 |
 | 34 | QEMU 新实例 PS/2 键盘注入完全失效 | 新启动 QEMU 实例（12+ 实测）键盘 0% 接收率（HMP sendkey 键名/数字、QMP input-send-event、长 hold、bios.bin/bios-256k.bin、v1.8/v1.9 磁盘均无效），仅长时间运行的老实例部分正常（~80%） | VM 交互测试前先单键探测；备用：STARTUP_CMD 自动执行路径可绕过键盘（ot 启动后自动跑）；根因待查（疑似 CatOS 键盘驱动初始化时序/IRQ1 状态） | ot v1.9 | 环境问题/未决 |
+| 35 | QEMU sendkey 注入存在不可控秒级延迟 + 键排队（2026-10-24 晚新证据） | sendkey 1 后 0.6s screendump 拍到的是注入前状态（菜单屏），键约 1~2s 后才被 CE 处理（此前 probe 轮"sendkey 1 → 失败屏"即为延迟送达）；菜单阶段 spc/数字键同样丢/延迟；10 连拍轮询 screendump（0.25s 间隔）全拍到同一失败屏=键未送达或排队未消费 | 节奏游戏"进关→LEADIN 1.2s→游玩"窗口截图时机失效：screendump 时游戏还没开始或已失败；精准跟拍判定词/胜利屏基本不可行 | ①screendump 轮询 + 色彩统计判断当前屏（绿=游玩准度条/黄=胜利/红=失败屏，单键即可区分）②连发键等延迟送达后消费 ③STARTUP_CMD 自动执行绕键盘 ④O 扫动准度条只能在 LEADIN 期间出现，属最稀缺画面 | 2026-10-24 adofai 实测 | 环境问题/未决 |
+
+## 七、Catos_Better_better 内核能力现状（2026-10-27 用户上传版，只读核查）
+
+| # | 能力/限制 | 确认值（源码证据） | 对 ot 的影响 | 处置 |
+|---|---|---|---|---|
+| 36 | 内核态权限系统（uid perms） | task.c:544-620 perm_tab/fs_perm_set/fs_perm_check 强制；SYS_SAVE 走 sys_save_uid（uid 检查失败返 -13）；fs_perm_seed 预设 /home /tmp 0777、/bin /appdevelop /etc 0755 | ot 用户态 ACL 与内核重复 → 已去除 ot 侧 ACL | 已去除重复；内核强制权限接管写保护 |
+| 37 | **读权限内核未查**（cat 可读任何文件） | sys_save_uid 只查写；SYS_CAT 无 perm 检查 | ot `cat` 移除 ACL 保护检查后现可读任意路径 | 若需读保护属内核功能需求 → 记此清单，**不擅自修内核** |
+| 38 | **CE 无 uid 查询 API** | ce.h 33 API 无 whoami/uid 槽位；uid 仅 task 内部 | ot 无法显示/对齐内核 uid | 若需 uid 查询 API → 内核功能需求，记此清单 |
+| 39 | save 上限 FS_DATA_MAX=512B 未变 | include/fs.h:13 `#define FS_DATA_MAX 512`；sys_save_uid `if (size > FS_DATA_MAX) return -7` | ot swap/分片协议仍必要（非重复） | 保留 swap；若内核提升上限再评估去除 |
+| 40 | ls 带回调（结构化目录列表） | include/ce.h:50 ce_ls_cb(is_dir,name,size,ud)；task.c VS_LS_THUNK | ot 已直接用回调式 ls，无重复实现 | 无需动作 |
+| 41 | 无磁盘 swap/分页文件 | paging.c 为内存分页（frame allocator）；CE API 无 swap | ot 的"分页文件"（swap）非重复实现 | 保留；用户点名的"分页文件"实测为内存分页 |
+
+## 八、GNU 工具链规划——内核侧需求（2026-10-28 用户提出，只记录不实施）
+
+| # | 能力/限制 | 现状（源码证据） | 对工具链的影响 | 处置 |
+|---|---|---|---|---|
+| 42 | **大文件读写**：FS_DATA_MAX=512B、无 seek/append/truncate/大块读 | include/fs.h:13 FS_DATA_MAX=512；sys_save_uid `if (size > FS_DATA_MAX) return -7`；SYS_CAT 上限 ~8KB | 编译器/链接器产出 .o/可执行文件均 >512B，无法落盘 | 工具链自举硬门槛 → 内核需大块读写 API（read/write @ offset + append/truncate）；当前只记录 |
+| 43 | **CE 镜像上限 64KB** | CE_MAX_IMAGE 64K / CE_MAX_BSS 256K（include/ce.h） | 真实 cc1/ld 镜像轻易超 64KB | 需提升上限或分段加载/动态加载器；当前只记录 |
+| 44 | **无管道/进程间通信 + 退出码** | CE API 33 槽无 pipe/spawn 等待；task_spawn_ce 仅内核 shell 用；CE 无 fork | make 依赖管道（|）与子进程退出码判断成败 | 需 pipe(FIFO) 抽象 + 子进程退出码传递 + shell 重定向；当前只记录 |
+| 45 | **可执行文件语义**（exec 位/读保护） | fs_perm_check 只强制写（SYS_SAVE）；无 exec 位 | 工具链需要"可执行文件"概念 | 属 #37 延伸；当前只记录 |
+| 46 | **标准 syscall 入口面（libc 层）** | CE API 为 33 槽自定义（ce.h），非 POSIX | GCC 编译产物需统一 ABI（exit/read/write/open/malloc） | 用户侧 libc 封装层可先做；内核侧可选提供 POSIX 兼容入口；当前只记录 |
