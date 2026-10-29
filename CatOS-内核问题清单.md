@@ -84,18 +84,18 @@
 | # | 能力/限制 | 确认值（源码证据） | 对 ot 的影响 | 处置 |
 |---|---|---|---|---|
 | 36 | 内核态权限系统（uid perms） | task.c:544-620 perm_tab/fs_perm_set/fs_perm_check 强制；SYS_SAVE 走 sys_save_uid（uid 检查失败返 -13）；fs_perm_seed 预设 /home /tmp 0777、/bin /appdevelop /etc 0755 | ot 用户态 ACL 与内核重复 → 已去除 ot 侧 ACL | 已去除重复；内核强制权限接管写保护 |
-| 37 | **读权限内核未查**（cat 可读任何文件） | sys_save_uid 只查写；SYS_CAT 无 perm 检查 | ot `cat` 移除 ACL 保护检查后现可读任意路径 | 若需读保护属内核功能需求 → 记此清单，**不擅自修内核** |
-| 38 | **CE 无 uid 查询 API** | ce.h 33 API 无 whoami/uid 槽位；uid 仅 task 内部 | ot 无法显示/对齐内核 uid | 若需 uid 查询 API → 内核功能需求，记此清单 |
-| 39 | save 上限 FS_DATA_MAX=512B 未变 | include/fs.h:13 `#define FS_DATA_MAX 512`；sys_save_uid `if (size > FS_DATA_MAX) return -7` | ot swap/分片协议仍必要（非重复） | 保留 swap；若内核提升上限再评估去除 |
+| 37 | **读权限内核未查**（cat 可读任何文件） | sys_save_uid 只查写；SYS_CAT 无 perm 检查 | ot `cat` 移除 ACL 保护检查后现可读任意路径 | **✅ 2026-10-28 内核 v2.5 已实现**：fs_perm_check 改位掩码 PERM_READ/WRITE/EXEC，SYS_LS/SYS_CAT 查 PERM_READ（实测 uid=0 正常） |
+| 38 | **CE 无 uid 查询 API** | ce.h 33 API 无 whoami/uid 槽位；uid 仅 task 内部 | ot 无法显示/对齐内核 uid | **✅ 2026-10-28 已核验/落地**：getuid 槽 33（v2.3 已有），实测返回 0 |
+| 39 | save 上限 FS_DATA_MAX=512B 未变 | include/fs.h:13 `#define FS_DATA_MAX 512`；sys_save_uid `if (size > FS_DATA_MAX) return -7` | ot swap/分片协议仍必要（非重复） | 保留 swap；2026-10-28 内核 v2.5 新增 file_write 大块 API（不经 FS_DATA_MAX）后，ot 可评估逐步切换新 API，swap 暂保留 |
 | 40 | ls 带回调（结构化目录列表） | include/ce.h:50 ce_ls_cb(is_dir,name,size,ud)；task.c VS_LS_THUNK | ot 已直接用回调式 ls，无重复实现 | 无需动作 |
 | 41 | 无磁盘 swap/分页文件 | paging.c 为内存分页（frame allocator）；CE API 无 swap | ot 的"分页文件"（swap）非重复实现 | 保留；用户点名的"分页文件"实测为内存分页 |
 
-## 八、GNU 工具链规划——内核侧需求（2026-10-28 用户提出，只记录不实施）
+## 八、GNU 工具链规划——内核侧需求（2026-10-28 用户提出，本次一次性改造落地）
 
 | # | 能力/限制 | 现状（源码证据） | 对工具链的影响 | 处置 |
 |---|---|---|---|---|
-| 42 | **大文件读写**：FS_DATA_MAX=512B、无 seek/append/truncate/大块读 | include/fs.h:13 FS_DATA_MAX=512；sys_save_uid `if (size > FS_DATA_MAX) return -7`；SYS_CAT 上限 ~8KB | 编译器/链接器产出 .o/可执行文件均 >512B，无法落盘 | 工具链自举硬门槛 → 内核需大块读写 API（read/write @ offset + append/truncate）；当前只记录 |
-| 43 | **CE 镜像上限 64KB** | CE_MAX_IMAGE 64K / CE_MAX_BSS 256K（include/ce.h） | 真实 cc1/ld 镜像轻易超 64KB | 需提升上限或分段加载/动态加载器；当前只记录 |
-| 44 | **无管道/进程间通信 + 退出码** | CE API 33 槽无 pipe/spawn 等待；task_spawn_ce 仅内核 shell 用；CE 无 fork | make 依赖管道（|）与子进程退出码判断成败 | 需 pipe(FIFO) 抽象 + 子进程退出码传递 + shell 重定向；当前只记录 |
-| 45 | **可执行文件语义**（exec 位/读保护） | fs_perm_check 只强制写（SYS_SAVE）；无 exec 位 | 工具链需要"可执行文件"概念 | 属 #37 延伸；当前只记录 |
-| 46 | **标准 syscall 入口面（libc 层）** | CE API 为 33 槽自定义（ce.h），非 POSIX | GCC 编译产物需统一 ABI（exit/read/write/open/malloc） | 用户侧 libc 封装层可先做；内核侧可选提供 POSIX 兼容入口；当前只记录 |
+| 42 | **大文件读写**：FS_DATA_MAX=512B、无 seek/append/truncate/大块读 | include/fs.h:13 FS_DATA_MAX=512；sys_save_uid `if (size > FS_DATA_MAX) return -7`；SYS_CAT 上限 ~8KB | 编译器/链接器产出 .o/可执行文件均 >512B，无法落盘 | **✅ 2026-10-28 内核 v2.5 已实现**：新增 SYS_FILE_READ(39, offset 簇定位)/FILE_WRITE(40, mode0 截断/mode1 追加)/FILE_DELETE(41)；fs_read_at/fs_write_raw_mode/fat_append_file；QEMU 实测 100KB 写 + offset 32768 读 + delete 全过 |
+| 43 | **CE 镜像上限 64KB** | CE_MAX_IMAGE 64K / CE_MAX_BSS 256K（include/ce.h） | 真实 cc1/ld 镜像轻易超 64KB | **✅ 2026-10-28 内核 v2.5 已实现**：CE_MAX_IMAGE→256KB、CE_MAX_BSS→512KB；移除 ce_bounce 大缓冲，spawn 直读首簇解析 header + FAT 链直写映射页 |
+| 44 | **无管道/进程间通信 + 退出码** | CE API 33 槽无 pipe/spawn 等待；task_spawn_ce 仅内核 shell 用；CE 无 fork | make 依赖管道（|）与子进程退出码判断成败 | **✅ 2026-10-28 内核 v2.5 已实现**：PIPE_CREATE(42)/WRITE(43)/READ(44)/CLOSE(45) 8×4KB 环形；SPAWN(46)/WAIT(47) 退出码；shell 重定向 `>`/`>>`/`|`；实测 gen|sink 11 行、child exit=0、重定向 0→100B |
+| 45 | **可执行文件语义**（exec 位/读保护） | fs_perm_check 只强制写（SYS_SAVE）；无 exec 位 | 工具链需要"可执行文件"概念 | **✅ 2026-10-28 内核 v2.5 已实现**：位掩码含 PERM_EXEC + 读保护（见 #37）；CE spawn 即"可执行"语义 |
+| 46 | **标准 syscall 入口面（libc 层）** | CE API 为 33 槽自定义（ce.h），非 POSIX | GCC 编译产物需统一 ABI（exit/read/write/open/malloc） | 用户侧 libc 封装层可先做；内核侧可选提供 POSIX 兼容入口；**本次未做（属下一步，仅记录）** |
