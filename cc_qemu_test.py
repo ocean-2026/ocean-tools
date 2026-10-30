@@ -4,6 +4,9 @@ Coverage:
   A. cc.ce runs ON CatOS: compiles HELLO.C (fib + sum) from the volume
   B. the produced OUT.CE runs: prints fib(10)=55 sum(5)=15
   C. reboot: OUT.CE + CC.CE survive the boot-time builtin install (#48)
+  D. P1 regression (AND asserts): EXTRA.C (shift xchg / for+continue /
+     no-step for / global string escapes / char-array string init) and
+     NOCE.C (missing ce_main rejected, no image produced)
 Screenshots to cc_shots/.
 """
 import socket, time, subprocess, re, struct, os, sys
@@ -137,6 +140,8 @@ def step_inject():
     jobs = [
         (BIN+'/cc.ce',   'CC.CE'),
         (OUT+'/HELLO.C', 'HELLO.C'),
+        (OUT+'/EXTRA.C', 'EXTRA.C'),
+        (OUT+'/NOCE.C',  'NOCE.C'),
     ]
     for src, name in jobs:
         r = subprocess.run(['python3', INJ, RAW, src, name], capture_output=True, text=True)
@@ -171,7 +176,7 @@ def step_inject():
         print('  FATAL: BIN subdir not found'); f.close(); return False
     binents=scan(bincl)
     print('  /BIN entries:', binents)
-    for want in ['CC','HELLO']:
+    for want in ['CC','HELLO','EXTRA','NOCE']:
         ok=any(n.startswith(want) for n in binents)
         print('  %-8s %s' % (want, 'OK' if ok else 'MISSING'))
         if not ok: f.close(); return False
@@ -179,11 +184,21 @@ def step_inject():
     return True
 
 def check(scr, *needles, label):
-    for nd in needles:
-        if nd in scr:
-            print('PASS %s: found "%s"' % (label, nd)); return True
-    print('FAIL %s: missing %s in screen:\n%s' % (label, needles, scr[-1200:]))
+    """AND semantics: every needle must appear in scr, else FAIL with the
+    missing ones listed (the old OR check let wrong numeric outputs pass)."""
+    miss = [nd for nd in needles if nd not in scr]
+    if not miss:
+        print('PASS %s: found all %s' % (label, needles))
+        return True
+    print('FAIL %s: missing %s in screen:\n%s' % (label, miss, scr[-1200:]))
     return False
+
+def check_not(scr, needle, label):
+    if needle in scr:
+        print('FAIL %s: unwanted "%s" in screen:\n%s' % (label, needle, scr[-1200:]))
+        return False
+    print('PASS %s: "%s" absent' % (label, needle))
+    return True
 
 s = None
 try:
@@ -229,6 +244,22 @@ try:
     scr = send_cmd('run /bin/OUT2.CE', 6)
     shot('r6_output_again')
     check(scr, 'cc-compiled hello', 'fib(10)=55', label='OUT2.CE runs after reboot')
+
+    # P1 regression: compile + run EXTRA.C on CatOS with the fixed cc.ce
+    scr = send_cmd('run /bin/cc.ce /BIN/EXTRA.C /BIN/EXTRA.CE', 8)
+    shot('r7_cc_compile_extra')
+    check(scr, 'OK -> /BIN/EXTRA.CE', label='cc compiles EXTRA.C (P1 regression)')
+
+    scr = send_cmd('run /bin/EXTRA.CE', 6)
+    shot('r8_extra_output')
+    check(scr, 'sh=12', 't=8', 'c=3', 'z=12', 'msg=hi', 'p1=A p2=B',
+          label='EXTRA.C values (shift/for-continue/array-init)')
+
+    # FIND-01: a source without ce_main must be rejected, not hang
+    scr = send_cmd('run /bin/cc.ce /BIN/NOCE.C /BIN/NOCE.CE', 6)
+    shot('r9_noce_error')
+    check(scr, 'no ce_main', label='cc rejects missing ce_main')
+    check_not(scr, 'OK -> /BIN/NOCE.CE', label='no NOCE.CE image produced')
 
     print('\n=== SUMMARY: all steps executed (PASS lines above) ===')
 finally:
