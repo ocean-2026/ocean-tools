@@ -12,7 +12,7 @@
 | 内核收尾（#48 / F1 / A2 / #49） | ✅ **完成** | 全部修复并回归通过（b31） |
 | 环境清理 | ✅ **完成** | gitignore 排除 8.9G 镜像/zip/调试产物 |
 | 目标一：GNU 工具链自举（子集） | ✅ **完成** | cc.ce 微型 C 编译器 QEMU 实机 4/4 PASS（编译→运行→重启存活） |
-| GitHub 推送 | 🔶 部分完成 | 文档/测试脚本已推 `f190439f`；node.c 源码仅本地 commit |
+| GitHub 推送 | 🔶 部分完成 | 文档/测试脚本已推；cc.c/task.c 源码仅本地 commit |
 
 ---
 
@@ -60,18 +60,33 @@
 
 - 截图：`cc_shots/r1~r6`（r2 编译 / r3 产物运行 / r5 重启后重编 / r6 重启后运行）
 
+### 2.5 目标一 P1 修复 + 回归（2026-10-30，双审闭环第二阶段）
+
+- **触发**：功能/正确性双路只读审查（`cc-review.md`，判定 PASS / 0 P0 / 7 P1 / 8 P2），按用户指示直接修复 P1 清单。
+- **cc.c 修复（6 处，kernel-v25 与 Catos_Better_better 双副本同步）**：
+  1. FIND-04 for 的 continue 回填到 step 起点（无 step 回填到 top 条件）；同时修正无 step 的 for 循环体回跳目标（step_pos→top）
+  2. FIND-05 `<<`/`>>` 插 `xchg eax,ecx`（87 C8）后再 shl/sar eax,cl，右操作数才进 cl
+  3. FIND-01 parse 末尾 `g_entry_off==0 → err_set("no ce_main")`，非 0 退出不产出镜像
+  4. FIND-02 新增共享 `str_decode()`：全局/局部字符串转义统一（\n \t \r \0 \\ \"）
+  5. FIND-03 全局 `char arr[]="str"` 改为逐字节内联初始化（不再写指针偏移进数组槽）
+  6. FIND-06 reloc/call/apiref 三表满容 `err_set`（不再静默丢弃）
+  7. **DREL 数据区重定位**（回归新发现）：全局 `char *g_p="str"` 指针槽必须存**绝对地址**（parse 期 g_olen 未定 → 新增 g_drel_at/g_drel_off 表，fixup_code 按 `CE_LOAD_BASE+最终olen+off` 回填；宿主验证槽值 0x20002fd OK）
+- **测试脚本**：`cc_qemu_test.py` check() OR→AND（全 needle 命中才 PASS）；新增 `EXTRA.C`（移位/for+continue/无 step for/全局串转义/数组串初始化）与 `NOCE.C`（无 ce_main 报错）用例。
+- **内核修复（回归新发现）**：`task.c sys_alloc` 用户堆分配只映射首个 4K 页 → 多页分配第二页起 #PF（EXTRA.C 236 token 写第 171 个 token 即崩）；已修复为分配时映射 payload 全部页面，记入 `CatOS-内核问题清单.md` #47；`sh build.sh iso` 重建内核+ISO。
+- **验收**：QEMU 全量回归 **8/8 PASS**——原 4/4（HELLO.C 编译/运行/重启存活/重编）+ EXTRA.C（`sh=12 t=8 c=3 z=12 msg=hi p1=A p2=B` 全对）+ NOCE.C（编译报错 `no ce_main`、不产出镜像）+ check() AND 语义；EXTRA.C step 用子集支持的 `i = i + 1`（子集不支持后缀 ++/--）；截图 `cc_shots/r1~r9`（9 张 png）。
+
 ---
 
 ## 三、Git 与 GitHub 状态
 
 | 项 | 内容 |
 |---|---|
-| 本地 HEAD | `4d850c6` — 目标一: cc.ce QEMU实机4/4 PASS（编译HELLO.C->OUT.CE运行/重启存活#48） |
-| GitHub ocean-2026/ocean-tools main | `8540ac3` — 目标一 cc.c 已推；`f190439f`（problem.md/TEST.JS/spawn_fail.c）之前已推 |
+| 本地 HEAD | `ddf44cd` — cc.ce P1 修复×6+DREL+内核堆页映射+8/8 回归 |
+| GitHub ocean-2026/ocean-tools main | 最新 `affbd11` — 测试驱动+EXTRA.C/NOCE.C+cc-review.md（P1 修复轮） |
 | 工作树 | clean（本地 commit 已含全部源码改动） |
-| **未推送** | `node.c`（53KB 源码，单文件超 push_files 舒适区，仅本地 commit） |
+| **未推送** | `cc.c`（51KB）/`task.c`（61KB）源码——单文件超 push_files 舒适区，仅本地 commit（同 node.c 先例） |
 
-历史已推：5982df4（problem.md v2.5.3 完整版）等 9 个 commit。
+历史已推：f190439f（node 交付）、ca0fd0a（cc 构建链+测试）、8dacfb3 对应本地审查 commit 等。
 
 ---
 
@@ -82,11 +97,11 @@
 - [x] **微型 C 编译器（cc.ce）**：CE 用户态实现——词法/语法解析 → x86 栈式代码生成 → CE01 镜像
 - [x] 编译 `HELLO.C`（递归 fib + while 求和）→ 生成可执行 OUT.CE，QEMU 实机运行 PASS
 - [x] 重启存活：#48 回归（cc.ce 与编译产物均存活，重编重跑 OK）
+- [x] 双审闭环：功能/正确性全量审查 PASS（cc-review.md）+ P1 修复 + QEMU 8/8 回归
 - [ ] **自举环（可选待办）**：cc.ce 编译自身源码——cc.c 用到 goto/struct/switch/typedef 暂不支持，需先扩展子集或裁剪源码
-- [ ] 双审闭环（功能审查子代理）+ GitHub 推送（本轮执行中）
 
 ### P1 —— 收尾与打磨
-- [ ] 推送 `node.c` 到 GitHub（可拆 commit 分批推，或用 create_or_update_file 大文件通道）
+- [ ] 推送 `cc.c`/`task.c` 到 GitHub（可拆 commit 分批推，或用大文件通道）
 - [ ] 内核 b31 快照 kernel-v25 已同步；如需发新版 problem.md 版本号（v2.5.4 → v2.6）再更新
 - [ ] CatOS-内核问题清单.md 第九节闭合表核对（#48/F1/A2/#49 已列）
 
@@ -99,9 +114,9 @@
 
 ## 五、需要用户介入的点
 
-1. ~~目标一是否立即开工~~ —— 已由本父代理亲自实现并 QEMU 实机验证完成（4/4 PASS）。
-2. **node.c 推送方式确认**：本地已有完整 commit，是否接受"仅文档上 GitHub、源码保留本地"的现状，或要求继续推源码。
+1. **cc.c/task.c 是否上 GitHub**：本地已有完整 commit（ddf44cd）；是否接受"仅文档/脚本上 GitHub、源码保留本地"现状（同 node.c），或要求继续推源码。
+2. 目标一自举环（cc.ce 编译自身）是否排期。
 
 ---
 
-*本文件随 0e99d76 之后的新 commit 一起维护；每次开发轮结束后更新本节状态。*
+*本文件随每次开发轮结束更新。*

@@ -16,7 +16,7 @@
 - [ot][易错点] **`gcc ... | head -N` 管道会吞掉错误信息，且 `$?` 取的是 head 的退出码不是 gcc 的**：编译失败时旧 .o 文件保留，ld 仍用旧对象产出"新"产物 → 改码后产物不变（本轮回放：ACL 删除后 ocntools.ce 仍含 su/whoami 就是此坑）。判编译成败用 `gcc ...; echo $?`（无管道）或 `&&` 链；改码后必须核对产物内容/时间戳（strings/grep 产物关键字）
 - [ot][易错点] qemu-img convert 在无 flock 支持的文件系统（hpvs_fs /home/user）报 "Failed to get resize/write lock"：目标路径换到 /tmp（overlay 支持锁），或 QEMU 磁盘镜像放 /tmp 再启动
 - [ot][易错点] FAT32 目录项是 11 字节 8.3 名（无点）：注入脚本匹配名字要 `b'OCNTOOLSCE '`（名 8 字节 + 扩展 3 字节），写 `b'OCNTOOLS.CE '` 会匹配失败
-- [ot][经验] Catos_Better_better 新内核 CE API 表：`ls` 带回调（ce_ls_cb：is_dir/name/size/ud）、FS_DATA_MAX=512 未变、cat≤8KB 未变、无 delete/append/seek/swap；内核态有 uid 权限系统（perm 表，SYS_SAVE 强制检查）；用户态"重复实现"排查应以此 API 面为基线
+- [ot][经验] Catos_Better_better 新内核 CE API 表：`ls` 带回调（ce_ls_cb：is_dir/name/size/ud），FS_DATA_MAX=512 未变、cat≤8KB 未变、无 delete/append/seek/swap；内核态有 uid 权限系统（perm 表，SYS_SAVE 强制检查）；用户态"重复实现"排查应以此 API 面为基线
 - [ot][易错点] sed 替换串含 `&` 时 `&` 是"整个匹配"特殊符，替换文本里的 & 必须写 `\&`，否则 C 字符串被破坏（"save&quit" 两次被 sed 改写坏，最终用 Edit 工具精确替换修复）；同样地，build.sh 内联 python 正则若匹配已删除的源码数组（BANNER[] 外置后）会报 `AttributeError: 'NoneType' object has no attribute 'group'`，改版删除源码数据时要同步改检查脚本（build.sh banner width check 已改读 scripts/BANNER.TXT）
 - [ot][易错点] push_files 内联参数必须填真实文件内容，不能填占位符后"再覆盖"——占位符会真的推上去（本次 audit/aesthetic/README/scripts 全被 PLACEHOLDER 覆盖过一轮，需二次推送真实内容修正，浪费一次 commit）
 - [ot内核v2.5][易错点] QEMU 环境每轮重置：qemu-system-i386/qemu-img/磁盘都会消失，开工先 `sudo apt-get update && apt-get install -y qemu-system-x86 qemu-utils`，重建 4G 稀疏盘 + QEMU 内 `format` 命令**需二次确认 y** 才真正格式化
@@ -34,3 +34,8 @@
 - [CatOS-cc编译器][易错点] **CE01 镜像必须满足内核加载器契约(task.c:1343-1345)**：entry 必须 ==0（ce_main 不在 body 偏移0 时，在 code 偏移0 插 `E9 rel32` 跳板、header entry 恒0）；api_off+4 <= image_size（api 槽放 body 末尾）；绝对地址以 body 起点=CE_LOAD_BASE 计算（不含 20B header 位移）；违反任一 → `run: cannot load (err -5)`
 - [CatOS-cc编译器][易错点] cc 子集测试源不能含 `#include`（词法器对 `#` 报 bad character）；`api->` 调用为内建，无需声明
 - [CatOS-QEMU][易错点] 云端每轮会话 QEMU/盘/iso 均重置：实测前必须重 make_disk + format（二次确认 y）+ 重建 b31 iso（旧 iso 无 #42 file_read/write，cc 无法运行）；pkill 进程名是 comm 截断后的 `qemu-system-i38`（15 字符限制）
+- [CatOS-cc编译器][易错点] **移位 `<<`/`>>` 错用左操作数低字节作计数**：gen_binary 求值后左在 ECX、右在 EAX，OP_SHL 原实现 `mov eax,ecx`(89 C8) 后 `shl eax,cl`，cl 仍=左操作数 → 3<<2 实得 24 非 12；必须先 `xchg eax,ecx`(87 C8) 使 eax=左、ecx=右，再 shl/sar eax,cl（FIND-05，EXTRA.C 断言 sh=12）
+- [CatOS-cc编译器][易错点] **for 的 continue 跳转必须回填到 step 起点**：for 处理器只记 `g_ncont=cb` 起点，continue 的 E9 占位从不回填（while 在 :823 有回填）→ continue 直落 body 尾跳过 step 增量（计数错/死循环）；必须 `ob_patch(g_cont[i], (step_pos|top)-g_cont[i]-4)`（无 step 的 for 回填到 top 条件，公式与 e_patch_here 同构）（FIND-04，EXTRA.C 断言 t=8）
+- [CatOS-内核][易错点] **用户堆分配只映射首个 4K 页**：task.c sys_alloc 仅对头所在页 heap_ensure，payload 第 2 页起未映射，任何 >4KiB 分配越页即 #PF（cc.ce 编译 236 token 的 EXTRA.C 写第 171 个 token 崩溃，HELLO.C 141 token 恰好不越页、长期未暴露）；修复：分配时循环映射 payload 全部页面（`for a=p0..p1 step 4096 heap_ensure`），记入 CatOS-内核问题清单.md #47
+- [CatOS-cc编译器][易错点] **全局指针串初始化不能存相对偏移，必须做数据区重定位**：`char *g_p="A\0B"` 的指针槽在 parse 期写入的 o 只是数据区相对偏移，而 API/指针 deref 需要**绝对地址**（本地串经 fixup 的 `CE_LOAD_BASE+olen+off` 变绝对，全局槽内容却从不被修正）→ `api->write(g_p)` 读到偏移小值当地址、输出为空；而 parse 期 g_olen 未定无法直接算绝对地址 → 必须加**数据-to-数据重定位表**（g_drel_at/g_drel_off，DREL_MAX=64），fixup_code 末尾按 `CE_LOAD_BASE+最终olen+off` 回填槽（EXTRA.C 断言 p1=A p2=B；槽值 0x20002fd 宿主验证 OK）
+- [CatOS-cc编译器][易错点] **cc 子集不支持后缀 ++/--**：PUNCTS 表有 `++`/`--` 但 gen_postfix/gen_binary 均不处理，`i++` 作 for step 会在 accept_op(OP_RP) 处报 `expected )`（ERR@ti 停在 ++）；测试源一律用 `i = i + 1` 等价形式（EXTRA.C 已改，239 token 编译运行全过）

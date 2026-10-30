@@ -15,6 +15,7 @@
 | 4 | 无固定地址 alloc + 固定链接基址 0x02000000 | 链接基址固定，无固定地址分配 | CE 程序无法动态加载/运行其他 CE（ot 不能 run .ce） | cecheck 作为用户态安全等价物（不依赖内核加载器） | v1.2 评估 | 已确认/已规避 |
 | 5 | api->exit() 有 bug：重载同一镜像 | exit() 会 relaunch 同镜像 | 调用 exit() 导致程序反复重启 | ce_main 直接 return 0，禁止调 api->exit() | v1.0 起 | 已确认/已规避 |
 | 6 | 无浮点运算 | 内核 API 无浮点 | 数学只能整数 | 全部整数运算 | v1.0 起 | 已确认 |
+| 47 | **用户堆分配只映射首个 4K 页**（多页分配第 2 页起访问即 #PF） | task.c sys_alloc 仅对"头所在页"heap_ensure，payload 其余页从未映射；实测 cc.ce 编译 236 token 的 EXTRA.C 在写第 171 个 token（token 缓冲第 2 页）时 #PF（cr2=0x2131000），HELLO.C 141 token 恰好不越页故此前从未暴露 | 任何用户态 CE 程序一旦堆分配 >4KiB 且使用越过首页即崩（编译器 code/src/tok 三个 56-128KiB 缓冲全部踩中） | ✅ 2026-10-30 已修复：sys_alloc 找到 chunk 后按 `for a=p0..p1 step 4096 heap_ensure` 映射 payload 全部页面（幂等，头页已映射的调用直接返回） | cc.ce P1 回归（EXTRA.C） | 已修复 |
 
 ## 二、文件系统（FAT32）
 
@@ -90,12 +91,21 @@
 | 40 | ls 带回调（结构化目录列表） | include/ce.h:50 ce_ls_cb(is_dir,name,size,ud)；task.c VS_LS_THUNK | ot 已直接用回调式 ls，无重复实现 | 无需动作 |
 | 41 | 无磁盘 swap/分页文件 | paging.c 为内存分页（frame allocator）；CE API 无 swap | ot 的"分页文件"（swap）非重复实现 | 保留；用户点名的"分页文件"实测为内存分页 |
 
-## 八、GNU 工具链规划——内核侧需求（2026-10-28 用户提出，本次一次性改造落地）
+## 八、GNU 工具链规划——内核侧需求（2026-10-28 用户提出，只记录不实施）
 
 | # | 能力/限制 | 现状（源码证据） | 对工具链的影响 | 处置 |
 |---|---|---|---|---|
 | 42 | **大文件读写**：FS_DATA_MAX=512B、无 seek/append/truncate/大块读 | include/fs.h:13 FS_DATA_MAX=512；sys_save_uid `if (size > FS_DATA_MAX) return -7`；SYS_CAT 上限 ~8KB | 编译器/链接器产出 .o/可执行文件均 >512B，无法落盘 | **✅ 2026-10-28 内核 v2.5 已实现**：新增 SYS_FILE_READ(39, offset 簇定位)/FILE_WRITE(40, mode0 截断/mode1 追加)/FILE_DELETE(41)；fs_read_at/fs_write_raw_mode/fat_append_file；QEMU 实测 100KB 写 + offset 32768 读 + delete 全过 |
 | 43 | **CE 镜像上限 64KB** | CE_MAX_IMAGE 64K / CE_MAX_BSS 256K（include/ce.h） | 真实 cc1/ld 镜像轻易超 64KB | **✅ 2026-10-28 内核 v2.5 已实现**：CE_MAX_IMAGE→256KB、CE_MAX_BSS→512KB；移除 ce_bounce 大缓冲，spawn 直读首簇解析 header + FAT 链直写映射页 |
-| 44 | **无管道/进程间通信 + 退出码** | CE API 33 槽无 pipe/spawn 等待；task_spawn_ce 仅内核 shell 用；CE 无 fork | make 依赖管道（|）与子进程退出码判断成败 | **✅ 2026-10-28 内核 v2.5 已实现**：PIPE_CREATE(42)/WRITE(43)/READ(44)/CLOSE(45) 8×4KB 环形；SPAWN(46)/WAIT(47) 退出码；shell 重定向 `>`/`>>`/`|`；实测 gen|sink 11 行、child exit=0、重定向 0→100B |
+| 44 | **无管道/进程间通信 + 退出码** | CE API 33 槽无 pipe/spawn 等待；task_spawn_ce 仅内核 shell 用；CE 无 fork | make 依赖管道（\|）与子进程退出码判断成败 | **✅ 2026-10-28 内核 v2.5 已实现**：PIPE_CREATE(42)/WRITE(43)/READ(44)/CLOSE(45) 8×4KB 环形；SPAWN(46)/WAIT(47) 退出码；shell 重定向 `>`/`>>`/`\|`；实测 gen\|sink 11 行、child exit=0、重定向 0→100B |
 | 45 | **可执行文件语义**（exec 位/读保护） | fs_perm_check 只强制写（SYS_SAVE）；无 exec 位 | 工具链需要"可执行文件"概念 | **✅ 2026-10-28 内核 v2.5 已实现**：位掩码含 PERM_EXEC + 读保护（见 #37）；CE spawn 即"可执行"语义 |
 | 46 | **标准 syscall 入口面（libc 层）** | CE API 为 33 槽自定义（ce.h），非 POSIX | GCC 编译产物需统一 ABI（exit/read/write/open/malloc） | 用户侧 libc 封装层可先做；内核侧可选提供 POSIX 兼容入口；**本次未做（属下一步，仅记录）** |
+
+## 九、b31 内核修复闭合（2026-10-29，随 node 交付轮）
+
+| 项 | 问题 | 根因（源码证据） | 修复 | 状态 |
+|---|---|---|---|---|
+| #48 | 启动时"Installed built-in apps"覆盖宿主注入文件（test_ab 运行显示 sysinfo 输出） | fat_flush 从内存 fat_cache **整扇区重写** FAT，宿主注入表项与内核改动同扇区被抹；fat_alloc 复用被抹表项 → 簇冲突 | fat_set 脏表项 journal（fat_journal[4096]/fat_jsec）+ fat_flush **脏扇区 RMW**（先 ATA 读盘再补丁写回 FAT#1/#2）+ fat_alloc 分配前 ATA 核对磁盘真 0；read_fat_region/fat_mkfs 清 journal | 已修复（QEMU 实测注入文件连续两轮重启存活） |
+| F1 | task_spawn_ce 失败路径泄漏子进程地址空间（反复失败 spawn 累积） | task_space_create 成功后的失败分支（原 -4/-6 direct return）不释放页表/页框 | 失败路径 goto fail_space4/fail_space6 → 先 `task_space_destroy(&t->space)` 再返回 | 已修复（spawn_fail.ce：40 次失败 spawn 后真实 spawn 仍成功） |
+| A2 | fat_append_file 中途失败无回滚，内存 FAT 悬挂链残留 | fat_alloc/fat_write_cluster 失败时已写 FAT 链接不还原 | aundo[512] undo 日志逆序回滚全部 FAT 链接，失败后内存 FAT 与调用前一致 | 已修复（test_ab 100KB 追加+偏移读+管道+spawn+delete 全过） |
+| #3 | fat_flush 每次整 FAT 区 8MB 全刷（性能） | 旧 fat_flush 写 FAT#1+FAT#2 全区 | 随 #48 改为脏扇区增量 RMW，不再全刷 | 已修复（随 #48 闭合） |
