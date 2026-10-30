@@ -28,9 +28,9 @@
 - 修复：SYS_PIPE_READ 读空当前数据后 `if (pp->len == 0) break;`（有数据即返回，EOF 语义保留）。
 - 复测：test_ab 管道自测 + shell gen|sink 均通过。
 
-### 3. [中] fat_flush 每次写 8MB（性能）—— **已知性能缺陷，未改**
-- fat_flush（fat.c:126）每次写 FAT#1 + FAT#2 全区（fat_sz=8192×512×2=8MB）。大文件 200×512B 写入实测卡住（1.6GB 写盘）；改 16KB 块 ×7（56MB）后通过。
-- 建议（后续优化）：脏段/脏页追踪，仅写修改的 FAT 扇区；或文件 write 时延迟 flush。**功能不受阻**。
+### 3. [中] fat_flush 每次写 8MB（性能）—— **已修复（b31，随 #48 深修一并闭合）**
+- 旧缺陷：fat_flush（fat.c:126）每次写 FAT#1 + FAT#2 全区（fat_sz=8192×512×2=8MB）。大文件 200×512B 写入实测卡住；改 16KB 块 ×7（56MB）后通过。
+- 修复（b31）：fat_flush 改为**脏扇区 RMW 增量写盘**——fat_set 每表项记录脏位（fat_journal[FAT_JOURNAL_MAX]/fat_jsec 位图），fat_flush 只对脏扇区先 ATA 读盘再补丁写回（FAT#1/FAT#2 各自按扇区写），不再整 FAT 区全刷。read_fat_region/fat_mkfs 后清 journal。
 
 ## 环境/工程易错点（已记录到 history/experience 候选）
 
@@ -48,9 +48,24 @@
 - [外部干扰] 同一工作区外部并行代理反复覆盖 src/fat.c、catos.iso、build/kernel.bin 与测试盘，导致 QEMU 实测加载版本与本地 build 不一致（iso 内核 sha 多次漂移），调试 trace（[FL/[SP/[WR/[RP/[F）已被注入但运行时版本不匹配无法闭合根因。
 - 建议：隔离工作区或串行化提交后再回归；本次未闭合问题待串行环境复测。
 
-## 内核#48(2026-10-29) 内置安装与注入文件簇冲突
+## 内核#48(2026-10-29) 内置安装与注入文件簇冲突 —— **已修复(b31)**
 format后注入TEST_AB.CE(cl36),重启后启动时"Installed built-in apps"安装sysinfo等内置app,可能复用已分配簇导致注入文件内容被覆盖(运行test_ab显示sysinfo输出)。
-未修,已规避:先启动一次再注入,或注入后用run验证。
+**根因（深修）**：fat_flush 从内存 fat_cache 按**整扇区重写** FAT——宿主侧注入 FAT 表项与内核本次改动落在同一扇区时，宿主注入的表项被整扇区覆写抹掉；后续 fat_alloc 又从（已被抹掉的）内存缓存分配出"空闲"簇 → 与注入文件数据簇冲突，内容互相覆盖。
+**修复（fat.c v2.5.4）**：
+1. **每表项脏位 journal**：fat_set 记录脏表项（fat_journal[4096]/fat_jsec 位图），fat_flush 只对脏扇区做 **RMW（先 ATA 读盘再补丁写回）**，宿主侧注入的其他表项保留。
+2. **fat_alloc 磁盘真值校验**：分配候选簇前先 ATA 读该簇对应 FAT 扇区核对磁盘上确实为 0（防内存缓存陈旧/被注入占用的簇被误判空闲）。
+3. read_fat_region / fat_mkfs 后清 journal，避免陈旧脏位。
+**验收**：注入 node.ce/TEST.JS/hello.ce/test_ab.ce/spawn_fail.ce 后连续两次重启（启动时内置安装反复写 FAT），注入文件内容与可运行性不变（run node /BIN/TEST.JS 仍 ALL PASS、hello.ce 正常输出）。
+
+## 内核F1(2026-10-29) task_spawn_ce 失败路径地址空间泄漏 —— **已修复(b31)**
+- 现象：task_spawn_ce 在 task_space_create 成功后的失败分支（原 -4/-6 direct return）不释放子进程页表/页框 → 反复失败 spawn 累积泄漏地址空间，最终真实 spawn 失败/系统内存耗尽。
+- 修复（task.c）：失败路径改为 goto fail_space4/fail_space6，先 `task_space_destroy(&t->space)` 再返回，页框/页表全部归还。
+- 验收：spawn_fail.ce 连续 40 次失败 spawn（tid<=0）后真实 spawn hello.ce 仍成功且 child exit=0（SPAWNF ALL PASS）。
+
+## 内核A2(2026-10-29) fat_append_file 无 undo 日志 —— **已修复(b31)**
+- 现象：fat_append_file 中途 fat_alloc/fat_write_cluster 失败时，已写入的 FAT 链接残留，内存 FAT 与调用前不一致（悬挂链）。
+- 修复（fat.c）：仿 fat_write_file 增加 aundo[512] undo 日志，失败时按逆序回滚全部 FAT 链接，保证失败后内存 FAT 与调用前一致。
+- 验收：test_ab.ce 100KB 追加写（7 块 mode1 追加）+ 偏移读 + 管道 + spawn + delete 全流程 ALL PASS。
 
 ## 内核#49(2026-10-29) `>`重定向对已存在文件不截断 → 已修(b30)
 根因:spawn_ce_redirect预截断受`fs_perm_check==0`条件保护,该检查不成立时跳过截断,随后强制append→旧内容+新内容。
