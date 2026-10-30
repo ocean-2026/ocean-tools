@@ -402,12 +402,11 @@ int console_owner_tid(void) { return console_owner; }
 void console_wake_all(void) {
     for (int i = 0; i < MAX_TASKS; i++)
         if (tasks[i].state == T_WAIT_KB) { tasks[i].state = T_READY; need_resched = 1; }
-    /* FIX(2026-10-27): cannot reschedule()/schedule_to() from the keyboard
-       ISR -- schedule_to says "never call from an ISR": switching tasks in
-       an ISR corrupts the interrupt frame (a woken ring3 CE task cannot
-       resume, getch never reads a key).  need_resched is consumed on a
-       safe path: preempt_at_syscall_exit before syscall return, or the
-       idle_main pick_ready loop. */
+    /* FIX(2026-10-27): 不能在键盘 ISR 里调用 reschedule()/schedule_to()——
+       schedule_to 注释明确 "never call from an ISR"：ISR 内切换任务会破坏
+       中断帧（ring3 CE 任务被唤醒后无法恢复、getch 永远读不到键）。
+       need_resched 改由安全路径消费：syscall 返回前 preempt_at_syscall_exit，
+       或 idle_main 循环 pick_ready。 */
 }
 
 void console_wake_release(int tid) {
@@ -1008,12 +1007,11 @@ void isr_syscall(int_frame_t *f) {
         break;
     }
     case SYS_GETCH: {
-        /* blocking keyboard wait (no console ownership requirement);
-           task_block yields the CPU, the keyboard IRQ wakes it and the
-           queue is re-checked directly.  FIX(2026-10-27): the old code
-           rescheduled after task_block when need_resched was set by the
-           keyboard ISR, stealing the freshly woken task on a path that
-           never consumed the flag -- CE getch could never read a key. */
+        /* 阻塞等待键盘事件（不要求控制台所有权）；
+           task_block 已让出 CPU，被键盘 IRQ 唤醒后直接重查队列。
+           FIX(2026-10-27): 原代码 task_block 后 if(need_resched) reschedule()
+           会把刚唤醒的任务又切走（need_resched 是键盘 ISR 设置的），
+           在无抢占路径消费时导致 CE getch 永远读不到键。 */
         while (kb_peek() == 0) {
             task_block(T_WAIT_KB);
         }
@@ -1502,10 +1500,10 @@ int task_spawn_ce(const char *path, int argc, char **argv, int uid) {
     /* F1 fix (v2.5.4): every failure after task_space_create used to
      * return without tearing the address space down, leaking the mapped
      * image/bss/vsyscall/stack frames plus the page-table frames. */
- fail_space4:
+fail_space4:
     task_space_destroy(&t->space);
     return -4;
- fail_space6:
+fail_space6:
     task_space_destroy(&t->space);
     return -6;
 }
