@@ -256,7 +256,7 @@ enum { SY_FUNC = 1, SY_GVAR, SY_LVAR };
 typedef struct {
     char name[28];
     int  kind, off, sz, is_ptr, is_arr, arr_sz;
-    int  addr, nparams;
+    int  addr, nparams, stidx;   /* stidx: index into g_st when typed over a struct */
 } sym_t;
 
 static sym_t g_sym[SYM_MAX];
@@ -320,6 +320,79 @@ static sym_t *sym_new(const char *n, int len, int kind) {
     s->sz = 4;
     return s;
 }
+
+/* ---- struct definitions (stage 1) ---- */
+#define STRUCT_MAX 16
+#define SMEM_MAX   48
+#define TAG_MAX    24
+typedef struct {
+    char tag[TAG_MAX];
+    int size, nmemb;
+    int m_off[SMEM_MAX];
+    int m_sz[SMEM_MAX];     /* 1=char, 4=int/ptr */
+    int m_ptr[SMEM_MAX];    /* member is a pointer */
+    int m_arr[SMEM_MAX];    /* member is an array */
+    int m_asz[SMEM_MAX];    /* array size when m_arr */
+    char m_name[SMEM_MAX][16];
+} stdef_t;
+static stdef_t g_st[STRUCT_MAX];
+static int g_nst;
+
+static stdef_t *st_find(const char *n, int len) {
+    for (int i = 0; i < g_nst; i++)
+        if (name_eqn(g_st[i].tag, n, len)) return &g_st[i];
+    return 0;
+}
+/* resolve a member by name; returns byte offset or -1; fills out params */
+static int st_member(stdef_t *d, const char *n, int len,
+                     int *osz, int *optr, int *oarr) {
+    for (int i = 0; i < d->nmemb; i++)
+        if (name_eqn(d->m_name[i], n, len)) {
+            if (osz)  *osz  = d->m_sz[i];
+            if (optr) *optr = d->m_ptr[i];
+            if (oarr) *oarr = d->m_arr[i];
+            return d->m_off[i];
+        }
+    return -1;
+}
+
+/* ---- typedef aliases (stage 1) ---- */
+#define TALIAS_MAX 24
+typedef struct {
+    char name[TAG_MAX];
+    int sz;        /* base size (1/4/struct-size) */
+    int ptr;       /* is a pointer typedef */
+    int stidx;     /* >=0 when aliases a struct type */
+} alias_t;
+static alias_t g_alias[TALIAS_MAX];
+static int g_nalias;
+static alias_t *al_find(const char *n, int len) {
+    for (int i = 0; i < g_nalias; i++)
+        if (name_eqn(g_alias[i].name, n, len)) return &g_alias[i];
+    return 0;
+}
+static void add_alias(const char *sp, int len, int sz, int ptr, int stidx) {
+    if (g_nalias >= TALIAS_MAX) { err_set("too many typedefs"); return; }
+    alias_t *a = &g_alias[g_nalias++];
+    unsigned i; for (i = 0; i < sizeof(*a); i++) ((unsigned char *)a)[i] = 0;
+    if (len > TAG_MAX - 1) len = TAG_MAX - 1;
+    sncpy(a->name, sp, len); a->name[len] = 0;
+    a->sz = sz; a->ptr = ptr; a->stidx = stidx;
+}
+
+/* ---- enum constants (stage 1) ---- */
+#define CONST_MAX 96
+typedef struct { char name[24]; int val; } const_t;
+static const_t g_const[CONST_MAX];
+static int g_nconst;
+static const_t *c_find(const char *n, int len) {
+    for (int i = 0; i < g_nconst; i++)
+        if (name_eqn(g_const[i].name, n, len)) return &g_const[i];
+    return 0;
+}
+
+/* size used by an lvalue chain for store/load (set by gen_lvalue) */
+static int g_lv_sz = 4;
 
 static const char *const API_NAMES[] = {
     "write", "putc", "cls", "readline", "time_str", "fs_ready", "ls",
@@ -387,13 +460,15 @@ static void e_jcc_back(int cc, int target) {
  * ================================================================== */
 static void gen_expr(void);
 static void gen_assign_expr(void);
+static int parse_type(int *sz, int *is_ptr, int *stidx);
+static void do_incdec(int kind, int prefix);
 
-static sym_t *local_new(const char *n, int len, int sz, int is_ptr, int is_arr, int arr_sz) {
+static sym_t *local_new(const char *n, int len, int sz, int is_ptr, int is_arr, int arr_sz, int stidx) {
     if (g_nloc >= LOC_MAX) { err_set("too many locals"); return 0; }
     sym_t *s = sym_new(n, len, SY_LVAR);
     if (!s) return 0;
     int unit = is_ptr ? 4 : sz;
-    int bytes = is_arr ? arr_sz * unit : 4;
+    int bytes = is_arr ? arr_sz * unit : (is_ptr ? 4 : (sz > 4 ? sz : 4));
     if (bytes < 4) bytes = 4;
     g_frame += bytes;
     s->off = -g_frame;
@@ -401,6 +476,7 @@ static sym_t *local_new(const char *n, int len, int sz, int is_ptr, int is_arr, 
     s->is_ptr = is_ptr;
     s->is_arr = is_arr;
     s->arr_sz = arr_sz;
+    s->stidx = stidx;
     g_loc[g_nloc++] = s;
     return s;
 }
@@ -497,6 +573,83 @@ static int str_decode(char *dst, int max, const char *sp, int len) {
 }
 
 /* postfix expression: literal / name / call / index */
+/* Emit the address of an lvalue (name already consumed).  Applies an optional
+ * postfix chain of [index], .member and ->member; when do_load is set the
+ * final scalar/pointer value is loaded from the resulting address (array
+ * lvalues decay to their address instead).  g_lv_sz receives the element size
+ * for a subsequent store. */
+static void gen_lvalue(sym_t *s, int do_load) {
+    int esize, obj_st, obj_ptr, obj_arr, obj_sz;
+    if (s->kind == SY_LVAR) e_lea_eax_ebp(s->off);
+    else                    e_data_addr(s->addr);
+
+    if (s->is_arr) {
+        obj_arr = 1;
+        if (s->is_ptr)            { obj_ptr = 1; obj_st = s->stidx; esize = 4; }
+        else if (s->stidx >= 0)   { obj_ptr = 0; obj_st = s->stidx; esize = s->sz; }
+        else                      { obj_ptr = 0; obj_st = -1;        esize = s->sz; }
+        obj_sz = s->sz;
+    } else if (s->is_ptr) {
+        obj_ptr = 1; obj_st = s->stidx; obj_arr = 0; obj_sz = 4; esize = 4;
+    } else {
+        obj_ptr = 0; obj_st = s->stidx; obj_arr = 0; obj_sz = s->sz; esize = s->sz;
+    }
+
+    for (;;) {
+        if (at_op(OP_LSB)) {
+            g_ti++;
+            e_push_eax();
+            gen_expr();
+            if (esize != 1) { ob8(0x69); ob8(0xC0); ob32((uint32_t)esize); }
+            e_pop_ecx();
+            ob8(0x01); ob8(0xC1);              /* add ecx,eax */
+            e_mov_eax_ecx();
+            if (!accept_op(OP_RSB)) { err_set("expected ]"); return; }
+            /* After indexing, the object is a single array element whose width
+               is `esize` -- the unit we just scaled the index by.  Do NOT
+               re-derive from the original symbol s->sz: when indexing a struct
+               member array such as r.buf[1], s is the enclosing struct var and
+               s->sz is the whole struct size, which would make a char element
+               store a 4-byte mov and clobber the next field.  Keep obj_ptr /
+               obj_st as they were entering this index (plain struct arrays keep
+               their stidx so a following .member still resolves). */
+            obj_sz = esize;
+            obj_arr = 0;
+            continue;
+        }
+        if (at_op(OP_DOT) || at_op(OP_ARROW)) {
+            int arrow = at_op(OP_ARROW);
+            g_ti++;
+            token_t *mn = cur();
+            if (mn->kind != TK_ID) { err_set("member name expected"); return; }
+            if (obj_st < 0) { err_set("member access on non-struct"); g_ti++; return; }
+            stdef_t *d = &g_st[obj_st];
+            int msz = 4, mptr = 0, marr = 0;
+            int moff = st_member(d, mn->sp, mn->len, &msz, &mptr, &marr);
+            g_ti++;
+            if (moff < 0) { err_set("no such member"); return; }
+            if (arrow) e_ld_eax_ptr();          /* -> : deref the pointer slot */
+            if (moff) { ob8(0x81); ob8(0xC0); ob32((uint32_t)moff); }  /* add eax,imm */
+            if (mptr)      { obj_ptr = 1; obj_st = -1; obj_arr = 0; obj_sz = 4; esize = 4; }
+            else if (marr) { obj_arr = 1; obj_ptr = 0; obj_st = -1; obj_sz = msz; esize = msz; }
+            else           { obj_arr = 0; obj_ptr = 0; obj_st = -1; obj_sz = msz; esize = msz; }
+            continue;
+        }
+        break;
+    }
+
+    g_lv_sz = obj_sz;
+    if (at_op(OP_INC) || at_op(OP_DEC)) {       /* postfix ++/-- */
+        int kind = at_op(OP_INC) ? OP_INC : OP_DEC;
+        g_ti++;
+        do_incdec(kind, 0);
+        return;
+    }
+    if (do_load && !obj_arr) {
+        if (obj_sz == 1) e_ldsx_eax_ptr(); else e_ld_eax_ptr();
+    }
+}
+
 static void gen_postfix(void) {
     token_t *t = cur();
     if (t->kind == TK_NUM || t->kind == TK_CHR) {
@@ -539,7 +692,12 @@ static void gen_postfix(void) {
 
     sym_t *s = lfind(t->sp, t->len);
     if (!s) s = gfind(t->sp, t->len);
-    if (!s) { err_set("undeclared name"); return; }
+    if (!s) {
+        const_t *c = c_find(t->sp, t->len);
+        if (c) { e_mov_eax(c->val); g_ti++; return; }
+        err_set("undeclared name");
+        return;
+    }
     g_ti++;
 
     if (s->kind == SY_FUNC) {
@@ -554,25 +712,75 @@ static void gen_postfix(void) {
         e_add_esp(n * 4);
         return;
     }
-    if (at_op(OP_LSB)) {
-        g_ti++;
-        gen_addr_indexed(s);
-        if (elem_sz(s) == 1) e_ldsx_eax_ptr(); else e_ld_eax_ptr();
-        if (!accept_op(OP_RSB)) err_set("expected ]");
-        return;
-    }
-    gen_load(s, 0);
+    gen_lvalue(s, 1);
 }
 
 static void gen_unary(void) {
+    if (at_kw("sizeof")) {
+        g_ti++;
+        if (!accept_op(OP_LP)) { err_set("expected ("); return; }
+        int deref = 0;
+        if (accept_op(OP_STAR)) deref = 1;
+        int sz = 4;
+        token_t *tt = cur();
+        if (tt->kind == TK_ID) {
+            alias_t *a = al_find(tt->sp, tt->len);
+            sym_t *vs = lfind(tt->sp, tt->len);
+            if (!vs) vs = gfind(tt->sp, tt->len);
+            if (a) {
+                g_ti++;
+                sz = (a->stidx >= 0) ? g_st[a->stidx].size : a->sz;
+                if (deref) sz = 4;
+            } else if (vs) {
+                g_ti++;
+                if (deref)      sz = (vs->stidx >= 0) ? g_st[vs->stidx].size : (vs->sz == 1 ? 1 : 4);
+                else if (vs->is_arr) sz = vs->arr_sz * (vs->is_ptr ? 4 : vs->sz);
+                else            sz = vs->sz;
+            } else { err_set("sizeof expects type"); return; }
+        } else {
+            int tsz = 4, tp = 0, tst = -1;
+            if (!parse_type(&tsz, &tp, &tst)) { err_set("sizeof expects type"); return; }
+            sz = (tst >= 0) ? g_st[tst].size : tsz;
+            if (deref) sz = 4;
+        }
+        if (!accept_op(OP_RP)) { err_set("expected )"); return; }
+        e_mov_eax(sz);
+        return;
+    }
     int o = tok_op();
     if (g_tok[g_ti].kind == TK_PUNCT) {
         if (o == OP_NOT)   { g_ti++; gen_unary(); e_test_setcc(0x4); return; }
         if (o == OP_MINUS) { g_ti++; gen_unary(); e_neg_eax(); return; }
         if (o == OP_TILDE) { g_ti++; gen_unary(); e_not_eax(); return; }
-        if (o == OP_AMP)   { g_ti++; gen_unary(); return; }   /* address */
+        if (o == OP_AMP)   {
+            g_ti++;
+            token_t *a = cur();
+            if (a->kind == TK_ID) {
+                sym_t *as = lfind(a->sp, a->len);
+                if (!as) as = gfind(a->sp, a->len);
+                if (as && as->kind != SY_FUNC) { g_ti++; gen_lvalue(as, 0); return; }
+            }
+            gen_unary();
+            return;
+        }   /* address-of */
         if (o == OP_STAR)  { g_ti++; gen_unary(); e_ld_eax_ptr(); return; }
         if (o == OP_PLUS)  { g_ti++; gen_unary(); return; }
+        if (o == OP_INC || o == OP_DEC) {       /* prefix ++/-- */
+            g_ti++;
+            token_t *op = cur();
+            if (op->kind == TK_ID) {
+                sym_t *vs = lfind(op->sp, op->len);
+                if (!vs) vs = gfind(op->sp, op->len);
+                if (vs && vs->kind != SY_FUNC) {
+                    g_ti++;
+                    gen_lvalue(vs, 0);
+                    do_incdec(o, 1);
+                    return;
+                }
+            }
+            err_set("bad prefix ++");
+            return;
+        }
     }
     gen_postfix();
 }
@@ -650,20 +858,25 @@ static void gen_binary(int minprec) {
     }
 }
 
-/* assignment: `lvalue OP= rhs` */
+/* assignment: `lvalue OP= rhs`; lvalue may carry [index] / .member / ->member */
 static void gen_assign_expr(void) {
     token_t *t = cur();
     if (t->kind == TK_ID) {
-        /* find the operator after [optional index] */
+        /* look past an optional postfix chain to find the assignment operator */
         int la = 1;
-        if (peek(la)->kind == TK_PUNCT && peek(la)->op == OP_LSB) {
-            int depth = 1;
-            la++;
-            while (peek(la)->kind != TK_EOF && depth) {
-                if (peek(la)->kind == TK_PUNCT && peek(la)->op == OP_LSB) depth++;
-                else if (peek(la)->kind == TK_PUNCT && peek(la)->op == OP_RSB) depth--;
+        for (;;) {
+            token_t *x = peek(la);
+            if (x->kind == TK_PUNCT && x->op == OP_LSB) {
+                int depth = 1; la++;
+                while (peek(la)->kind != TK_EOF && depth) {
+                    if (peek(la)->kind == TK_PUNCT && peek(la)->op == OP_LSB) depth++;
+                    else if (peek(la)->kind == TK_PUNCT && peek(la)->op == OP_RSB) depth--;
+                    la++;
+                }
+            } else if (x->kind == TK_PUNCT && (x->op == OP_DOT || x->op == OP_ARROW)) {
                 la++;
-            }
+                if (peek(la)->kind == TK_ID) la++;
+            } else break;
         }
         token_t *nx = peek(la);
         if (nx->kind == TK_PUNCT) {
@@ -673,26 +886,17 @@ static void gen_assign_expr(void) {
                 sym_t *s = lfind(t->sp, t->len);
                 if (!s) s = gfind(t->sp, t->len);
                 if (s && s->kind != SY_FUNC) {
-                    /* consume the NAME (the operator is consumed below) */
-                    g_ti++;
-                    int es = elem_sz(s);
-                    int indexed = 0;
-                    if (at_op(OP_LSB)) {
-                        indexed = 1;
-                        g_ti++;
-                        gen_addr_indexed(s);
-                        if (!accept_op(OP_RSB)) err_set("expected ]");
-                    } else {
-                        gen_load(s, 1);
-                    }
-                    e_push_eax();                    /* keep lvalue address */
+                    g_ti++;                       /* consume the NAME */
+                    gen_lvalue(s, 0);            /* eax = lvalue address */
+                    int es = g_lv_sz;
+                    e_push_eax();                 /* keep lvalue address */
                     if (o == OP_ASG) {
                         g_ti++;
-                        gen_assign_expr();           /* rhs -> eax */
-                        e_mov_ecx_eax();             /* ecx = value */
-                        e_pop_eax();                 /* eax = address */
+                        gen_assign_expr();        /* rhs -> eax */
+                        e_mov_ecx_eax();          /* ecx = value */
+                        e_pop_eax();              /* eax = address */
                         if (es == 1) e_st8_eax_ptr(); else e_st_eax_ptr();
-                        e_mov_eax_ecx();             /* result = value */
+                        e_mov_eax_ecx();          /* result = value */
                         return;
                     }
                     /* compound: old = [addr]; compute; store */
@@ -707,7 +911,6 @@ static void gen_assign_expr(void) {
                     case OP_PLUSASG:  e_bin_eax_ecx(0x01); break;
                     case OP_MINUSASG: ob8(0x29); ob8(0xC1); e_mov_eax_ecx(); break;
                     case OP_MULASG:   ob8(0x0F); ob8(0xAF); ob8(0xC1); break;
-                    /* eax = rhs, ecx = old value: xchg makes ecx the divisor */
                     case OP_DIVASG:   ob8(0x87); ob8(0xC8); ob8(0x99); ob8(0xF7); ob8(0xF9); break;
                     case OP_MODASG:   ob8(0x87); ob8(0xC8); ob8(0x99); ob8(0xF7); ob8(0xF9);
                                       ob8(0x89); ob8(0xD0); break;
@@ -750,17 +953,84 @@ static int g_brk[BRK_MAX];   static int g_nbrk;
 static int g_cont[BRK_MAX];  static int g_ncont;
 static int g_brk_base, g_cont_base;
 
-static int is_type_kw(void) {
-    return at_kw("int") || at_kw("char") || at_kw("void") || at_kw("unsigned");
+/* goto labels (stage 3) */
+#define LBL_MAX 48
+static char g_lbl_name[LBL_MAX][24];
+static int  g_lbl_off[LBL_MAX];      /* code offset of definition; -1 if forward */
+static int  g_nlbl;
+static int  g_goto_at[LBL_MAX];      /* unresolved forward goto jump site */
+static int  g_goto_lbl[LBL_MAX];
+static int  g_ngoto;
+static int  lbl_decl(const char *sp, int len) {
+    for (int i = 0; i < g_nlbl; i++)
+        if (name_eqn(g_lbl_name[i], sp, len)) return i;
+    if (g_nlbl >= LBL_MAX) { err_set("too many labels"); return 0; }
+    int idx = g_nlbl++;
+    unsigned k; for (k = 0; k < sizeof(g_lbl_name[idx]); k++) g_lbl_name[idx][k] = 0;
+    int L = len > 23 ? 23 : len;
+    sncpy(g_lbl_name[idx], sp, L); g_lbl_off[idx] = -1;
+    return idx;
 }
 
-static int parse_type(int *sz, int *is_ptr) {
+/* increment/decrement an lvalue whose address is in EAX; uses g_lv_sz.
+ * kind=OP_INC/OP_DEC; prefix=1 gives new value, 0 gives old value. */
+static void do_incdec(int kind, int prefix) {
+    int es = g_lv_sz;
+    e_push_eax();                              /* [esp]=addr */
+    ob8(0x8B); ob8(0x04); ob8(0x24);           /* eax=[esp]=addr */
+    if (es == 1) e_ldsx_eax_ptr(); else e_ld_eax_ptr();   /* eax=old */
+    e_push_eax();                              /* [esp]=addr,[esp+4]=old */
+    if (kind == OP_INC) { ob8(0x83); ob8(0xC0); ob8(1); } /* add eax,1 */
+    else                { ob8(0x83); ob8(0xE8); ob8(1); } /* sub eax,1 */
+    ob8(0x8B); ob8(0x4C); ob8(0x24); ob8(4);  /* ecx=[esp+4]=addr */
+    if (es == 1) { ob8(0x88); ob8(0x01); }    /* mov [ecx],al */
+    else         { ob8(0x89); ob8(0x01); }    /* mov [ecx],eax */
+    if (prefix) {
+        /* result already in eax (new) */
+    } else {
+        ob8(0x8B); ob8(0x04); ob8(0x24);      /* eax=[esp]=old */
+    }
+    e_add_esp(8);
+}
+
+static int is_type_kw(void) {
+    if (at_kw("int") || at_kw("char") || at_kw("void") || at_kw("unsigned") ||
+        at_kw("struct")) return 1;
+    token_t *t = cur();
+    if (t->kind == TK_ID) {
+        for (int i = 0; i < g_nalias; i++)
+            if (name_eqn(g_alias[i].name, t->sp, t->len)) return 1;
+    }
+    return 0;
+}
+
+/* parse a type.  *stidx receives the struct index (>=0) when the type is a
+ * struct or a typedef over a struct; pass NULL when unneeded. */
+static int parse_type(int *sz, int *is_ptr, int *stidx) {
     *sz = 4; *is_ptr = 0;
+    if (stidx) *stidx = -1;
     if (accept_kw("char")) *sz = 1;
     else if (accept_kw("int")) *sz = 4;
     else if (accept_kw("unsigned")) { *sz = 4; accept_kw("int"); }
     else if (accept_kw("void")) *sz = 4;
-    else return 0;
+    else if (accept_kw("struct")) {
+        token_t *t = cur();
+        if (t->kind != TK_ID) { err_set("struct tag expected"); return 0; }
+        stdef_t *d = st_find(t->sp, t->len);
+        if (!d) { err_set("undefined struct"); return 0; }
+        g_ti++;
+        *sz = d->size;
+        if (stidx) *stidx = (int)(d - g_st);
+    }
+    else {
+        token_t *t = cur();
+        if (t->kind != TK_ID) return 0;
+        alias_t *a = al_find(t->sp, t->len);
+        if (!a) return 0;
+        g_ti++;
+        *sz = a->sz;
+        if (stidx) *stidx = a->stidx;
+    }
     while (accept_op(OP_STAR)) *is_ptr = 1;
     return 1;
 }
@@ -775,8 +1045,8 @@ static int const_size(void) {
 }
 
 static void gen_local_decl(void) {
-    int sz, ptr, is_arr = 0, arr_sz = 0;
-    if (!parse_type(&sz, &ptr)) { err_set("type expected"); return; }
+    int sz, ptr, st = -1, is_arr = 0, arr_sz = 0;
+    if (!parse_type(&sz, &ptr, &st)) { err_set("type expected"); return; }
     for (;;) {
         token_t *nm = cur();
         if (nm->kind != TK_ID) { err_set("name expected"); return; }
@@ -788,7 +1058,7 @@ static void gen_local_decl(void) {
             if (!accept_op(OP_RSB)) err_set("expected ]");
             is_arr = 1;
         }
-        sym_t *s = local_new(nm->sp, nm->len, sz, ptr, is_arr, arr_sz);
+        sym_t *s = local_new(nm->sp, nm->len, sz, ptr, is_arr, arr_sz, st);
         if (!s) return;
         if (accept_op(OP_ASG)) {
             /* zero the array, or store the scalar */
@@ -885,6 +1155,74 @@ static void gen_stmt(void) {
         g_ncont = cb;
         return;
     }
+    if (accept_kw("switch")) {
+        if (!accept_op(OP_LP)) { err_set("expected ("); return; }
+        gen_expr();
+        if (!accept_op(OP_RP)) { err_set("expected )"); return; }
+        e_push_eax();                          /* save switch value */
+        if (!accept_op(OP_LB)) { err_set("expected {"); return; }
+        int bb = g_nbrk;
+        /* emit statements until break / next label / '}' */
+        for (;;) {
+            if (at_op(OP_RB) || cur()->kind == TK_EOF) break;
+            if (accept_op(OP_SEMI)) continue;
+            if (accept_kw("break")) {
+                if (!accept_op(OP_SEMI)) { err_set("expected ;"); return; }
+                if (g_nbrk < BRK_MAX) g_brk[g_nbrk++] = e_jmp_fwd();
+                continue;                     /* break out of case body */
+            }
+            if (accept_kw("default")) {
+                if (!accept_op(OP_COLON)) { err_set("expected :"); return; }
+                /* default body: run statements until next label / rb */
+                while (!at_op(OP_RB) && cur()->kind != TK_EOF && !g_err) {
+                    if (accept_op(OP_SEMI)) continue;
+                    if (accept_kw("case") || accept_kw("default")) { err_set("stray label"); return; }
+                    if (accept_kw("break")) {
+                        if (!accept_op(OP_SEMI)) { err_set("expected ;"); return; }
+                        if (g_nbrk < BRK_MAX) g_brk[g_nbrk++] = e_jmp_fwd();
+                        break;
+                    }
+                    gen_stmt();
+                }
+                continue;
+            }
+            if (accept_kw("case")) {
+                int v = 0;
+                if (accept_op(OP_MINUS)) v = -1;
+                if (cur()->kind == TK_NUM || cur()->kind == TK_CHR) {
+                    int base = cur()->num; g_ti++;
+                    v = (v == -1) ? -base : base;
+                } else {
+                    const_t *cf = c_find(cur()->sp, cur()->len);
+                    if (cf) { v = cf->val; g_ti++; }
+                    else { err_set("case constant expected"); return; }
+                }
+                if (!accept_op(OP_COLON)) { err_set("expected :"); return; }
+                ob8(0x8B); ob8(0x04); ob8(0x24);    /* mov eax,[esp] */
+                ob8(0x3D); ob32((uint32_t)v);        /* cmp eax,imm32 */
+                int jne = e_jnz_fwd();
+                /* case body: statements until break / next label / rb */
+                while (!at_op(OP_RB) && cur()->kind != TK_EOF && !g_err) {
+                    if (accept_op(OP_SEMI)) continue;
+                    if (at_kw("case") || at_kw("default")) break;
+                    if (accept_kw("break")) {
+                        if (!accept_op(OP_SEMI)) { err_set("expected ;"); return; }
+                        if (g_nbrk < BRK_MAX) g_brk[g_nbrk++] = e_jmp_fwd();
+                        break;
+                    }
+                    gen_stmt();
+                }
+                e_patch_here(jne);                   /* next case */
+                continue;
+            }
+            gen_stmt();
+        }
+        if (!accept_op(OP_RB)) { err_set("expected }"); return; }
+        for (int i = bb; i < g_nbrk; i++) e_patch_here(g_brk[i]);
+        g_nbrk = bb;
+        e_add_esp(4);                          /* pop switch value */
+        return;
+    }
     if (accept_kw("break")) {
         if (!accept_op(OP_SEMI)) { err_set("expected ;"); return; }
         if (g_nbrk < BRK_MAX) g_brk[g_nbrk++] = e_jmp_fwd();
@@ -893,6 +1231,35 @@ static void gen_stmt(void) {
     if (accept_kw("continue")) {
     if (!accept_op(OP_SEMI)) { err_set("expected ;"); return; }
         if (g_ncont < BRK_MAX) g_cont[g_ncont++] = e_jmp_fwd();
+        return;
+    }
+    if (accept_kw("goto")) {
+        token_t *ln = cur();
+        if (ln->kind != TK_ID) { err_set("label expected"); return; }
+        g_ti++;
+        if (!accept_op(OP_SEMI)) { err_set("expected ;"); return; }
+        int idx = lbl_decl(ln->sp, ln->len);
+        if (g_lbl_off[idx] >= 0) {
+            e_jmp_back(g_lbl_off[idx]);
+        } else {
+            int at = e_jmp_fwd();
+            if (g_ngoto < LBL_MAX) { g_goto_at[g_ngoto] = at; g_goto_lbl[g_ngoto] = idx; g_ngoto++; }
+            else err_set("too many gotos");
+        }
+        return;
+    }
+    /* label:   (identifier followed by ':') */
+    if (cur()->kind == TK_ID && peek(1)->kind == TK_PUNCT && peek(1)->op == OP_COLON) {
+        token_t *ln = cur();
+        int idx = lbl_decl(ln->sp, ln->len);
+        g_ti += 2;
+        g_lbl_off[idx] = (int)ob_at();
+        for (int i = 0; i < g_ngoto; i++)
+            if (g_goto_lbl[i] == idx && g_goto_at[i] >= 0) {
+                ob_patch((uint32_t)g_goto_at[i],
+                         (uint32_t)(ob_at() - g_goto_at[i] - 4));
+                g_goto_at[i] = -1;
+            }
         return;
     }
     if (is_type_kw()) { gen_local_decl(); return; }
@@ -917,12 +1284,12 @@ static void parse_func(void) {
     int np = 0;
     if (!at_op(OP_RP)) {
         for (;;) {
-            int psz = 4, pp = 0;
-            if (!parse_type(&psz, &pp)) { accept_kw("int"); }
+            int psz = 4, pp = 0, pst = -1;
+            if (!parse_type(&psz, &pp, &pst)) { accept_kw("int"); }
             token_t *pn = cur();
             if (pn->kind != TK_ID) { err_set("parameter expected"); return; }
             g_ti++;
-            sym_t *ps = local_new(pn->sp, pn->len, psz, pp, 0, 0);
+            sym_t *ps = local_new(pn->sp, pn->len, psz, pp, 0, 0, pst);
             if (ps) ps->off = 8 + np * 4;
             np++;
             if (accept_op(OP_COMMA)) continue;
@@ -943,6 +1310,128 @@ static void parse_func(void) {
     ob_patch(sub_at + 2, (uint32_t)((g_frame + 15) & ~15u));
 }
 
+/* ---- stage 1: struct / typedef / enum top-level parsers ---- */
+
+/* parse a struct body `struct [tag] { members }`; leaves cursor after '}'.
+ * Used both for plain struct definitions and by typedef. */
+static stdef_t *parse_struct_def(void) {
+    accept_kw("struct");
+    token_t *tag = cur();
+    stdef_t *d = 0;
+    int have_tag = 0;
+    if (tag->kind == TK_ID) {
+        g_ti++; have_tag = 1;
+        d = st_find(tag->sp, tag->len);
+        if (!d) {
+            if (g_nst >= STRUCT_MAX) { err_set("too many structs"); return 0; }
+            d = &g_st[g_nst++];
+            unsigned i; for (i = 0; i < sizeof(*d); i++) ((unsigned char *)d)[i] = 0;
+            int L = tag->len > TAG_MAX - 1 ? TAG_MAX - 1 : tag->len;
+            sncpy(d->tag, tag->sp, L); d->tag[L] = 0;
+        }
+    }
+    if (!at_op(OP_LB)) {
+        /* `struct tag;` forward declaration with no body */
+        if (!accept_op(OP_SEMI)) err_set("expected ;");
+        return 0;
+    }
+    if (!d) {
+        if (g_nst >= STRUCT_MAX) { err_set("too many structs"); return 0; }
+        d = &g_st[g_nst++];
+        unsigned i; for (i = 0; i < sizeof(*d); i++) ((unsigned char *)d)[i] = 0;
+    }
+    g_ti++;                                   /* '{' */
+    int off = 0;
+    d->nmemb = 0;
+    while (!at_op(OP_RB) && cur()->kind != TK_EOF && !g_err) {
+        if (accept_op(OP_SEMI)) continue;
+        int msz = 4, mptr = 0, mst = -1;
+        if (!parse_type(&msz, &mptr, &mst)) { err_set("member type expected"); return 0; }
+        token_t *nm = cur();
+        if (nm->kind != TK_ID) { err_set("member name expected"); return 0; }
+        g_ti++;
+        int is_arr = 0, asz = 0;
+        if (accept_op(OP_LSB)) {
+            asz = const_size(); if (!asz) asz = 16;
+            if (!accept_op(OP_RSB)) err_set("expected ]");
+            is_arr = 1;
+        }
+        int align = mptr ? 4 : msz;
+        if (align != 1) off = (off + align - 1) & ~(align - 1);
+        int idx = d->nmemb;
+        int L = nm->len > 15 ? 15 : nm->len;
+        sncpy(d->m_name[idx], nm->sp, L); d->m_name[idx][L] = 0;
+        d->m_off[idx] = off;
+        d->m_sz[idx] = msz;
+        d->m_ptr[idx] = mptr;
+        d->m_arr[idx] = is_arr;
+        d->m_asz[idx] = asz;
+        int unit = mptr ? 4 : msz;
+        off += is_arr ? asz * unit : unit;
+        d->nmemb++;
+        if (!accept_op(OP_SEMI)) { err_set("expected ; in struct"); return 0; }
+    }
+    if (!accept_op(OP_RB)) { err_set("expected }"); return 0; }
+    d->size = (off + 3) & ~3;
+    return d;
+}
+
+static void parse_typedef(void) {
+    accept_kw("typedef");
+    if (at_kw("struct")) {
+        stdef_t *d = parse_struct_def();
+        token_t *nm = cur();
+        if (nm->kind == TK_ID) {
+            g_ti++;
+            int st = d ? (int)(d - g_st) : -1;
+            add_alias(nm->sp, nm->len, d ? d->size : 4, 0, st);
+        }
+        if (!accept_op(OP_SEMI)) err_set("expected ;");
+        return;
+    }
+    int sz = 4, ptr = 0, st = -1;
+    if (!parse_type(&sz, &ptr, &st)) { err_set("typedef type expected"); return; }
+    token_t *nm = cur();
+    if (nm->kind != TK_ID) { err_set("typedef name expected"); return; }
+    g_ti++;
+    while (accept_op(OP_STAR)) ptr = 1;
+    add_alias(nm->sp, nm->len, sz, ptr, st);
+    if (!accept_op(OP_SEMI)) err_set("expected ;");
+}
+
+static void parse_enum(void) {
+    accept_kw("enum");
+    if (cur()->kind == TK_ID) g_ti++;          /* tag ignored */
+    if (accept_op(OP_LB)) {
+        int v = 0;
+        for (;;) {
+            token_t *nm = cur();
+            if (nm->kind != TK_ID) { err_set("enum name expected"); return; }
+            g_ti++;
+            if (accept_op(OP_ASG)) {
+                int neg = 0;
+                if (accept_op(OP_MINUS)) neg = 1;
+                if (cur()->kind != TK_NUM) { err_set("enum value"); return; }
+                v = cur()->num; g_ti++;
+                if (neg) v = -v;
+            }
+            if (g_nconst < CONST_MAX) {
+                int L = nm->len > 23 ? 23 : nm->len;
+                unsigned i;
+                for (i = 0; i < sizeof(g_const[g_nconst].name); i++) g_const[g_nconst].name[i] = 0;
+                sncpy(g_const[g_nconst].name, nm->sp, L);
+                g_const[g_nconst].val = v;
+                g_nconst++;
+            } else err_set("too many enum constants");
+            v++;
+            if (accept_op(OP_COMMA)) continue;
+            break;
+        }
+        if (!accept_op(OP_RB)) { err_set("expected }"); return; }
+    }
+    if (!accept_op(OP_SEMI)) err_set("expected ;");
+}
+
 static void parse_program(void) {
     /* The kernel's CE loader demands entry == 0 and api_off + 4 <= image_size.
      * ce_main may be defined anywhere in the source, so we plant a 5-byte
@@ -950,11 +1439,23 @@ static void parse_program(void) {
      * header); the header entry stays 0 and the stub is patched in fixup_code. */
     g_entry_jmp = e_jmp_fwd();
     while (cur()->kind != TK_EOF && !g_err) {
-        /* skip preprocessor lines already removed; skip `typedef`/`#` */
         if (accept_op(OP_SEMI)) continue;
-        int sz, ptr;
+        if (accept_kw("typedef")) { parse_typedef(); continue; }
+        if (at_kw("enum")) { parse_enum(); continue; }
+        if (at_kw("struct")) {
+            int li = 1, isdef = 0;
+            if (peek(li)->kind == TK_ID) li++;
+            if (peek(li)->kind == TK_PUNCT && peek(li)->op == OP_LB) isdef = 1;
+            if (isdef) {
+                parse_struct_def();
+                if (!accept_op(OP_SEMI)) err_set("expected ; after struct");
+                continue;
+            }
+            /* otherwise: `struct tag v;` falls through as a normal decl */
+        }
+        int sz, ptr, st = -1;
         int is_func = 0;
-        if (!parse_type(&sz, &ptr)) {
+        if (!parse_type(&sz, &ptr, &st)) {
             token_t *t = cur();
             if (t->kind == TK_EOF) break;
             if (t->kind == TK_ID) { g_ti++; continue; }  /* unknown type: skip */
@@ -984,10 +1485,11 @@ static void parse_program(void) {
             }            sym_t *g = sym_new(nm->sp, nm->len, SY_GVAR);
             if (!g) return;
             g->sz = sz; g->is_ptr = ptr; g->is_arr = is_arr; g->arr_sz = arr_sz;
+            g->stidx = st;
             g->addr = (int)g_dlen;
             {
                 int unit = ptr ? 4 : sz;
-                int bytes = is_arr ? arr_sz * unit : 4;
+                int bytes = is_arr ? arr_sz * unit : (ptr ? 4 : (sz > 4 ? sz : 4));
                 if (bytes < 4) bytes = 4;
                 for (int i = 0; i < bytes && g_dlen < sizeof(g_data); i++) g_data[g_dlen++] = 0;
             }
