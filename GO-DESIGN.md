@@ -76,15 +76,18 @@ TEST.GO 自检覆盖：算术/优先级、6 种比较、4 种逻辑、if/else、
 - **FIND-G1（P1）语法错误行号不定位**：`Tok` 增加 `line` 字段，lex 时记录 token 起始行；`perr()` 取当前 token 行号（不再因 lex 一次扫完全文而冻结在文末）；未闭合 `(`/`(` call 缺 `)` 时改报开括号所在行。实测 SYN.GO（第 3 行缺 `)`）报 `line 3`。
 - **FIND-G2（P1）字符串 `+` 拼接 199 字节硬截断**：删掉栈上 `tmp[200]`，改用 arena 按 `v_disp_len(l)+v_disp_len(r)` 动态分配拼接缓冲；数字/布尔操作数内联渲染。实测拼接 250 字符 `len=250`（原 199），`"n="+42 → "n=42"`。
 
-### 未修（P2，列入后续迭代）
-- FIND-G3 无 Go 递归栈深上限（建议 g_call_depth>200 rerr）。
-- FIND-G4 非法字符被词法 default 静默吞成运行时错（建议 default 分支 perr）。
-- FIND-G5 readfile 请求 20479 但内核 file_read 单次上限 16384（>16KB 脚本需分块读取；当前脚本 <3KB）。
-- FIND-G6 arena 扩容 `s->v`/`a->v` 未判空。
-- FIND-G7 字符串字面量 >1023 静默截断、未闭合引号不报错。
-- FIND-G8 顶层 break/continue/return 静默停跑不报错。
-- FIND-G9 for init `:=` 变量泄漏外层作用域（非 Go 循环作用域，无害）。
-- FIND-G10 数字字面量溢出无检测（int32 UB）。
+### 已修复（v1.2，P2 ×8 全修，QEMU go_p2 7/7 + 复查 PASS）
+- **FIND-G3** 递归栈深上限：`g_call_depth` 计数 >200 帧 `rerr("recursion too deep")`。
+- **FIND-G4** 非法字符词法错：lexer default 分支 `perr`（不再静默吞成运行时 undefined variable）。
+- **FIND-G5** readfile 16KiB 分块：`read_whole()` 按内核 file_read 单次上限 16384 循环合并；BIG.GO 18204B QEMU 实测读回完整。
+- **FIND-G6** arena 子分配判空：scope_new/arr_new 的 a_alloc 判空。
+- **FIND-G7** 字符串字面量扩容：lex_string 双 pass（先扫闭合 `"` 数解码长度 → arena n+1 分配 → decode），无 1023 截断；未闭合引号报错。
+- **FIND-G8** 顶层 break/continue/return：g_loop_depth/g_func_depth==0 时 `perr("... outside ...")`。
+- **FIND-G9** for init 循环作用域：S_FOR 执行时 scope_new 隔离，i 不泄漏外层。
+- **FIND-G10** 数字溢出检测：uint32 扫描 >INT32_MAX 报错。
+
+### 已修复（v1.2.1，复查 NEW-01 补修，QEMU go_p2b 9/9）
+- **NEW-01（P2）n_new/a_str/a_strn OOM 安全路径**：G6 复查发现漏了 AST 主分配 `n_new`（650-700 条语句时 arena 耗尽解引用空指针段错误 rc=139）。v1.2.1：`a_str/a_strn` OOM 返 empty 哨兵、`n_new` 返 bad 哨兵并置 g_perr、ce_main 检 `g_oom` 打印 `go: out of memory (script too large for interpreter arena)` 返 1。LARGE.GO（49916B/1000 语句）QEMU 实测干净报错 rc=1，无段错误。
 
 ### 远期
-- map/结构体、`range`、多行返回值、`fmt.Println` 包路径；真编译为 CE 产物；MINI_GO.GO 扩到完整表达式优先级与注释/字符串字面量。
+- map/结构体、`range`、多行返回值、`fmt.Println` 包路径；真编译为 CE 产物；MINI_GO.GO 扩到完整表达式优先级与注释/字符串字面量；Go 脚本容量（g_filebuf 20KB）与 arena 192KB 扩容评估。
