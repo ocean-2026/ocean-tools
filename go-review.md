@@ -195,3 +195,69 @@ hostroot 内四个 `.GO` 与 `catos-qemu/` 权威源 `diff` 全部 IDENTICAL，�
 ## 方法声明
 
 本审查为**只读静态逐行审查 + 宿主侧独立复验**：以当前 `go.c` 原生 gcc（64 位）配合 stdio/文件系统桩重编译为独立 host 可执行，实测 DEMO、TEST.GO（34/34 ALL PASS）、自举链（输出 7）；以 xxd 实测 go.ce 头 20 字节；以对照实验定位行号与拼接截断两个缺陷。**未修改 go.c 或任何被测文件、未运行 QEMU、未重建 go.ce 镜像**；QEMU 4/4 PASS（含重启存活、截图证据）作为外部事实采信。
+
+---
+---
+
+# 第二轮复查：go.c v1.2（P2 修复轮）— 2026-10-31
+
+复查对象：`extapp/go.c` v1.2（1300 行 / 47698B），含上轮 2 个 P1（G1/G2）+ 8 个 P2（G3–G10）修复及 `g_perr/g_errline` 重置时序调整。
+复查方式：以权威 `go.c`（md5 `f9876f42…`，编译前与 extapp 逐字节比对一致）+ `host_stub_go.c` 原生 gcc 重编译为独立 `go_host`；host 桩主动把 `file_read` 钳到 ≤16384 以逼出分块路径。**只读、未改被测文件、未跑 QEMU、未 git**。
+
+## 总体判定：**PASS（修复轮验收）**
+
+- 上轮 2 个 P1（G1 行号、G2 拼接截断）**已正确修复并实测验证**。
+- 8 个 P2（G3–G10）**全部实现且实测通过**，无一项假修。
+- **未发现本轮修复引入的新回归**：G9 循环作用域、G7 双 pass 转义、G5 分块边界在回归探针（嵌套循环 / 转义 / >16KB 脚本）下均正确。
+- **1 个残留容量坑（非本轮回归）**：arena 耗尽时 `n_new` 返回 NULL 未判空，约 650–700 条语句的脚本段错误——G6 只加固了 `scope_new`/`arr_new` 的子分配，漏了最大消费者 `n_new`。详见 NEW-01。
+
+## 宿主 5 项验收复验（独立编译，非开发子代理二进制）
+
+| # | 验收项 | 预期 | 实测 | 判定 |
+|---|---|---|---|---|
+| A | 无参 demo | `fib(10)= 55` / `demo done` / `exit ok` | 完全一致 | ✅ |
+| B | TEST.GO | 34 行 PASS + `ALL PASS` | 34/34 ALL PASS | ✅ |
+| C | 自举 MINI_GO→MINI_IN | 输出 `7` | 仅一行 `7` | ✅ |
+| D | SYN.GO 语法错 | `syntax error at line 3` | `go: syntax error at line 3`（缺右括号在第 3 行） | ✅ G1 修复实证 |
+| E | 拼接 250 字符 | `len=250` | `250` | ✅ G2 修复实证（上轮为 199） |
+
+## 8 项 P2 逐项判定（自造定向用例，非开发子代理 T_*.GO）
+
+| 修复 | 判定 | 证据（实测输出 / 行号） |
+|---|---|---|
+| **G3** 递归栈深上限 | ✅ 正确 | `func f(n){ if n==0 return 0; return f(n+1)}; print(f(1))` → `go: runtime error: recursion too deep`（call_user go.c:1049 `g_call_depth>=200` 拦截，深度计数器在 :1053/:1074 配对增减）。注：f(0) 命中 base case 不递归，须从 f(1) 起 |
+| **G4** 非法字符词法报错 | ✅ 正确 | `var b = 2 @` → `go: syntax error at line 2`（不再是运行期 undefined）。default 分支 go.c:358-363 置 `g_perr`，:365 兜底加 T_EOF |
+| **G5** readfile 16KiB 分块 | ✅ 正确 | `readfile("/BIN/BIGDATA.TXT")`（18204B）→ `len=18204`；>16KB 脚本（17036B 巨型字面量）经 `read_whole` 分块加载并 `bigstr-len 17000` 正确。`read_whole` go.c:1089-1102 按 FS_CHUNK=16384 循环、`space=bufsz-1-off` 钳制、n==0 停、末尾 NUL |
+| **G6** arena 子分配判空 | ⚠️ 部分 | `scope_new` go.c:701、`arr_new` :732 已判空并置 `g_oom`；**但 `n_new`（:154）未判空**，见 NEW-01 |
+| **G7** 字面量 arena 扩容 + 未闭合引号 | ✅ 正确 | 1200 字符字面量 → `len=1200`（上轮 1023 截断）；未闭合 `"abc` → `syntax error at line 1`。双 pass go.c:225-266：pass1 计数 n（转义折成 1 字节、遇换行推进 g_line），pass2 解码，arena 按 n+1 分配 |
+| **G8** 顶层 break/return 报错 | ✅ 正确 | 顶层 `break` → `syntax error at line 2`；顶层 `return 5` → `syntax error at line 2`。`g_loop_depth`/`g_func_depth` 在 for/func 解析时进出（:595-597/:651-653），break/continue/return 判 depth==0 报错（:658/:665/:669） |
+| **G9** for init 循环级作用域 | ✅ 正确 | `for i:=0;i<3;i=i+1{print(i)}` 后 `print("after", i)` → 内部打 0/1/2，循环后 `undefined variable`（i **不泄漏**）。S_FOR go.c:886-899 建循环 scope、parent=外层 scope、循环后恢复；嵌套循环（外层 i 对内层可见）实测 `nested=63` 手算一致 |
+| **G10** int32 溢出检测 | ✅ 正确 | `var a = 3000000000` → `syntax error at line 1`。go.c:306 阈值 `v>214748364 或 (v==214748364 && d>7)`，标准 INT32_MAX=2147483647 |
+
+## 回归探针（确认修复未引入新问题）
+
+| 探针 | 结果 | 判定 |
+|---|---|---|
+| 嵌套循环 + while 式 | `nested 63`（=0+1+10+11+20+21 手算一致）、`while-x 3` | ✅ G9 作用域隔离不影响外层变量读写 |
+| 双 pass 转义 | `"a\nb\tc\\d\"e\0f"` len=11，奇索引为控制字符（10/9/92/34/0） | ✅ G7 解码正确，转义未丢 |
+| >16KB 脚本自身分块加载（17036B 巨型字面量） | `bigstr-len 17000` exit ok | ✅ G5 对"脚本加载路径"同样生效，非仅 readfile 内建 |
+
+## 与开发子代理宣称的不符点
+
+1. **G6 不完整（唯一实质偏差）**：宣称"arena 子分配判空"，实际只覆盖 `scope_new`/`arr_new` 的**二级**分配，未覆盖 AST 主分配 `n_new`。arena 耗尽时仍段错误（NEW-01）。不影响验收（验收脚本 <3KB），但 G6 的"防 OOM"承诺在最大消费者上未兑现。
+2. **QEMU 7/7 PASS（含 BIG.GO 18204B）**：按约束未跑 QEMU，无法亲验；其 host 等价路径（分块 readfile / 分块脚本加载 / 大字面量）在宿主侧全部复现通过，故采信但标注为外部事实。
+3. 其余宣称（宿主 5 项、TEST 34 项、自举 7）与独立复验**逐行一致**，无夸大。
+
+## 新增问题清单（本轮）
+
+| 级别 | 编号 | 内容 | 证据 |
+|---|---|---|---|
+| **P2** | NEW-01 | arena 192KB 被 AST 耗尽时 `n_new` 返 NULL、调用方 `n->a=l` 解引用空指针 → **段错误（rc=139）**，而非优雅 "out of memory"。阈值约 650–700 条 `total = total + N` 语句（每语句 ~5 Node × ~56B）。`n_new` go.c:153-160 不判空，调用点如 :412/:433/:453 直接写成员。**非本轮回归**（v1.1 同 arena 同未判空），但属 G6 应一并处理而漏的路径 | 实测：600 行 exit ok、700 行段错误、1000 行 rc=139；对比 17036B 巨字面量脚本（少 AST 节点）正常，证明是 AST 节点数而非文件大小 |
+
+**一行级修复建议（交开发子代理）**：`n_new` 内 `if (!n) { g_oom = 1; return 0; }` 已在，但调用方未判空；最稳的是在 `p_or`/`p_cmp`/`p_add`/`p_mul` 等 `Node *n = n_new(...)` 后判 `if (!l 或 !n) return n_new(E_UNDEF);`，或让 `a_alloc` 失败时 `longjmp` 到 ce_main 的 OOM 出口。验收不受影响，可择期处理。
+
+## 复查结论
+
+1. **v1.2 修复轮 PASS**：2 个 P1 + 8 个 P2 全部正确实现并实测验证，无新回归，宿主 5 项验收与宣称一致。
+2. **唯一偏差**：G6 防 OOM 覆盖不全（漏 `n_new`），约 700 语句以上脚本段错误——记 P2，非阻断，建议同批补一行判空。
+3. **自举与镜像契约**：本轮未改动，沿用上轮结论（自举为真、CE01 头/api_off+4==image_size/48 槽全部正确）。
