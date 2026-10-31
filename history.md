@@ -42,7 +42,7 @@
 
 ## CatOS go.c 用户态 Go 子集解释器（v1.0 QEMU PASS）
 [CatOS-go][易错点]CE 解释器里 E_ID 标识符不能直接拿源码缓冲指针做 key：token 的 sp 指向源串且非 null 结尾（后面紧跟 '(' / 其它字符），scope_find 若用 strcmp 会越界误判。必须在 p_primary 把标识符 a_strn intern 成 arena 内 null 结尾副本，函数名/形参名同理。
-[CatOS-go][易错点]词法阶段一元运算符要独立编码：`!` 和 `!=` 不能都映射成 OP_NE，否则 `!0`/`!1` 无法被 p_unary 识别（裸 `!` 用字符码 '!`，`!=` 用 OP_NE）。
+[CatOS-go][易错点]词法阶段一元运算符要独立编码：`!` 和 `!=` 不能都映射成 OP_NE，否则 `!0`/`!1` 无法被 p_unary 识别（裸 `!` 用字符码 '!'，`!=` 用 OP_NE）。
 [CatOS-go][易错点]字符字面量转义表要补全：`'\r'` 若不映射成 13，会被当成字母 'r'(114)，后果是 tokenizer 里每个 r 都触发 flush，把 "print" 切成 "p"/"int"（自举时踩到）。
 [CatOS-go][易错点]for 的 init/post 子句形如 `i:=0` / `i=i+1`，是短变量/赋值语句而非纯表达式，必须走 p_stmt，不能只 p_expr（否则停在 '=' 上报语法错）。
 [CatOS-go][经验]CE 用户态解释器调试高效路径：先写 host_stub 把 go.c 当普通 32/64 位主机程序跑（stub 提供 write/alloc/file_read/atoi），在主机上二分定位解析/求值 bug，最后才上 QEMU；QEMU 截图只用于验收，不要用它反复调逻辑。
