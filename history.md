@@ -39,3 +39,25 @@
 - [CatOS-内核][易错点] **用户堆分配只映射首个 4K 页**：task.c sys_alloc 仅对头所在页 heap_ensure，payload 第 2 页起未映射，任何 >4KiB 分配越页即 #PF（cc.ce 编译 236 token 的 EXTRA.C 写第 171 个 token 崩溃，HELLO.C 141 token 恰好不越页、长期未暴露）；修复：分配时循环映射 payload 全部页面（`for a=p0..p1 step 4096 heap_ensure`），记入 CatOS-内核问题清单.md #47
 - [CatOS-cc编译器][易错点] **全局指针串初始化不能存相对偏移，必须做数据区重定位**：`char *g_p="A\0B"` 的指针槽在 parse 期写入的 o 只是数据区相对偏移，而 API/指针 deref 需要**绝对地址**（本地串经 fixup 的 `CE_LOAD_BASE+olen+off` 变绝对，全局槽内容却从不被修正）→ `api->write(g_p)` 读到偏移小值当地址、输出为空；而 parse 期 g_olen 未定无法直接算绝对地址 → 必须加**数据-to-数据重定位表**（g_drel_at/g_drel_off，DREL_MAX=64），fixup_code 末尾按 `CE_LOAD_BASE+最终olen+off` 回填槽（EXTRA.C 断言 p1=A p2=B；槽值 0x20002fd 宿主验证 OK）
 - [CatOS-cc编译器][易错点] **cc 子集不支持后缀 ++/--**：PUNCTS 表有 `++`/`--` 但 gen_postfix/gen_binary 均不处理，`i++` 作 for step 会在 accept_op(OP_RP) 处报 `expected )`（ERR@ti 停在 ++）；测试源一律用 `i = i + 1` 等价形式（EXTRA.C 已改，239 token 编译运行全过）
+
+## CatOS go.c 用户态 Go 子集解释器（v1.0 QEMU PASS）
+[CatOS-go][易错点]CE 解释器里 E_ID 标识符不能直接拿源码缓冲指针做 key：token 的 sp 指向源串且非 null 结尾（后面紧跟 '(' / 其它字符），scope_find 若用 strcmp 会越界误判。必须在 p_primary 把标识符 a_strn intern 成 arena 内 null 结尾副本，函数名/形参名同理。
+[CatOS-go][易错点]词法阶段一元运算符要独立编码：`!` 和 `!=` 不能都映射成 OP_NE，否则 `!0`/`!1` 无法被 p_unary 识别（裸 `!` 用字符码 '!`，`!=` 用 OP_NE）。
+[CatOS-go][易错点]字符字面量转义表要补全：`'\r'` 若不映射成 13，会被当成字母 'r'(114)，后果是 tokenizer 里每个 r 都触发 flush，把 "print" 切成 "p"/"int"（自举时踩到）。
+[CatOS-go][易错点]for 的 init/post 子句形如 `i:=0` / `i=i+1`，是短变量/赋值语句而非纯表达式，必须走 p_stmt，不能只 p_expr（否则停在 '=' 上报语法错）。
+[CatOS-go][经验]CE 用户态解释器调试高效路径：先写 host_stub 把 go.c 当普通 32/64 位主机程序跑（stub 提供 write/alloc/file_read/atoi），在主机上二分定位解析/求值 bug，最后才上 QEMU；QEMU 截图只用于验收，不要用它反复调逻辑。
+[CatOS-go][易错点]语法报错行号需取自 token 的 line 字段：解释器在解析前 lex_run 一次性扫完全文并推进 g_line，到解析阶段 g_line 已冻结在文末，perr 若直接记 g_line，所有语法错都报成"文件总行数"。修复：Tok 加 line 字段、lex_add 时盖当前行，perr 记 cur()->line；未闭合括号再改报开括号所在行。
+[CatOS-go][易错点]字符串拼接不要在栈上定长缓冲（tmp[200]/k<199）硬截断：会静默丢数据（拼接 250 得 199）。应按两操作数渲染长度求和后用 arena 动态分配，数字/布尔内联渲染。
+
+## CatOS cc.c 自举环阶段1-3（struct/typedef/enum + switch + goto/++--）
+[CatOS-cc编译器][易错点] **switch 的 case 比较跳转(jne)必须在整个 case 体解析完后再回填**：若在单条 gen_stmt() 后立即 e_patch_here(jne)，回填点恰好落在 case 体尚未发射的 break E9 上，jne 永远跳到 end 而非下一 case（实测 c1=100 但 c2/c5/default 全 0）。正确：用内层 while 循环吃完整 case 体（break/下一 label/`}` 为终止），循环结束后再 patch jne 到当前 ob_at()。
+[CatOS-cc编译器][易错点] **成员访问必须走 lvalue 地址模型**：旧 gen_postfix 对标识符直接 gen_load 取值，无法支持 `.`/`->`/`&x`。重构为 gen_lvalue(s,do_load)：先算基地址(局部 lea/全局 e_data_addr)，再链上 [idx]/./->，最后按需 [eax] 取值；obj_st/obj_arr/esize 贯穿链以正确处理结构体成员与数组成员下标。`&x` 旧实现实为取值，须改为 gen_lvalue(as,0) 取地址。
+[CatOS-cc编译器][经验] 扩展编译器时高效闭环：写 host_stub.c 把 cc.c 当普通主机程序跑（write→stdout、file_read/write→沙盒文件），宿主机先验证"解析+codegen 不报错+反汇编偏移正确"，最后才上 QEMU；QEMU 截图只做验收。反汇编 CE body（dd 掉 20B 头 + objump -b binary -m i386 --adjust-vma=0x2000000）可在不上 QEMU 时秒级定位 codegen 错误。
+
+[CatOS-cc编译器][易错点] FIND-S1-01：struct 成员经 [idx] 访问后 obj_sz 必须按元素宽度（esize）重置，否则 char 元素 store 用 4 字节 mov（89 08）覆盖相邻字段。gen_lvalue 的 [idx] 分支旧逻辑用原始符号 s->sz 重置 obj_sz/esize——当链是 `r.buf[1]`（s 是外层 struct 变量，stidx≥0，s->sz=整个 struct 大小）时，buf 元素 store 被当成 8/4 字节写，越界写到相邻 int 字段。修复：索引后 `obj_sz = esize; obj_arr = 0;`（esize 已是缩放索引用的元素单位宽，由前置 `.member` 或初始符号正确设置），不再回读 s->sz；obj_ptr/obj_st 保留进入索引前的状态（普通 struct 数组的 stidx 保留以便后续 `.member` 解析）。回归用例 CHARBUG.C：`struct{char buf[4]; int x;} r; r.x=42; r.buf[1]=9;` 断言 x 仍为 42；objdump 可见 char store 为 `88 08`（mov %cl），仅 int store 为 `89 08`。
+
+## CatOS go.c v1.2/v1.2.1 P2 修复轮（2026-10-31）
+[CatOS-go][易错点] 解释器 lexer 与 parser 共用 g_perr/g_errline 错误通道时，重置点必须放在 lex_run 入口，不能放在 parser 入口——否则 lexer 阶段（非法字符/未闭合引号/数字溢出）刚设好的错误会被 parser 前的 g_perr=0 抹掉，词法错静默退化成"exit ok"。
+[CatOS-go][易错点] lexer 中途 break 退出时必须补一个 lex_add(T_EOF,...) 再 return，否则 parser 的 p_stmt_list 会越过 g_tokn 读到未初始化的 g_tok[] 元素，宿主侧直接 segfault（CE 侧表现为不可预测内存访问）。
+[CatOS-内核] file_read 单次 max<=16384 是硬契约（ce_abi.h L98），用户态读 >16KB 文件必须自己分块；任何 CE 程序里出现 api->file_read(path, buf, 20479, 0) 都是 bug（go.c 旧代码即此，v1.2 改 read_whole 分块）。
+[CatOS-go][易错点] arena OOM 处理必须覆盖 AST 主分配 n_new 而不仅是 scope/arr 二级分配：n_new 返 NULL 后调用方解引用 → 650-700 条语句时段错误 rc=139。正确做法：a_str/a_strn 返 empty 哨兵、n_new 返 bad 哨兵并置 g_perr、ce_main 检 g_oom 打印 out-of-memory 信息返非 0。
